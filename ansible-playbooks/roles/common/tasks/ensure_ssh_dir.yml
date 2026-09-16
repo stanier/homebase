@@ -1,0 +1,8 @@
+---
+- name: Ensure containers user's .ssh directory exists
+  ansible.builtin.file:
+    path: "{{ containers_home }}/.ssh"
+    state: directory
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+    mode: "0700"

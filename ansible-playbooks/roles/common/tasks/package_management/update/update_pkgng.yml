@@ -1,0 +1,6 @@
+---
+# stub: FreeBSD hosts
+- name: Update pkgng packages
+  community.general.pkgng:
+    name: "*"
+    state: latest

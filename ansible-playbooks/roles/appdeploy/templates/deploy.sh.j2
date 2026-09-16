@@ -1,0 +1,120 @@
+#!/bin/bash
+# Managed by ansible-playbooks (roles/appdeploy) -- edits here are
+# overwritten on the next run. This is the forced SSH command for
+# containers_user's appdeploy CI key (see authorized_key task in
+# tasks/main.yml): sshd puts whatever the client actually typed in
+# SSH_ORIGINAL_COMMAND, ignoring any command it tried to run directly, so
+# a compromised CI secret can only ever reach this script with these
+# three arguments -- not an arbitrary shell.
+#
+# Builds happen here, not in CI: gitea-runner's job containers have no
+# docker/podman socket exposed to them (see gitea-runner/data/config.yaml
+# -- container.docker_host is deliberately "-" after a prior
+# permission-denied crash trying to bind-mount one in). So instead of
+# push/pull through a registry, the caller tars its own build context
+# and pipes it over this same SSH session's stdin -- same trick a plain
+# `git push` uses server-side, just with tar instead of git's own
+# pack protocol.
+set -euo pipefail
+
+# Belt-and-suspenders: an interactive SSH login should already get this
+# from pam_systemd, but containerapps' own systemd tasks (see its
+# main.yml) have to set it explicitly for become_user sessions, which
+# don't go through PAM at all -- setting it here too costs nothing and
+# avoids relying on exactly how this particular session was established.
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+
+STATE_DIR="{{ containers_home }}/appdeploy/state"
+PORTS_FILE="$STATE_DIR/ports.tsv"
+BUILD_DIR="{{ containers_home }}/appdeploy/build"
+QUADLET_DIR="{{ containers_home }}/.config/containers/systemd"
+DOMAIN_SUFFIX="{{ appdeploy_domain_suffix }}"
+BASE_PORT="{{ appdeploy_base_port }}"
+CADDY_ROUTE_KEY="{{ containers_home }}/.ssh/caddy_route_ed25519"
+CADDY_ROUTE_HOST="{{ hostvars[appdeploy_caddy_route_hostname].ansible_host }}"
+
+# shellcheck disable=SC2206 # word-splitting the client's command is the point
+args=(${SSH_ORIGINAL_COMMAND:-})
+app="${args[0]:-}"
+tag="${args[1]:-}"
+container_port="${args[2]:-}"
+
+if [[ -z "$app" || -z "$tag" || -z "$container_port" ]]; then
+  echo "usage: <app> <tag> <container-port>  (build context tar.gz piped on stdin)" >&2
+  exit 1
+fi
+
+# Guards both podman's image/unit naming rules and the Caddy/systemd
+# filenames built from $app below -- this is the one value an attacker
+# controls without already holding the CI deploy key, since it becomes
+# part of a path and a generated hostname.
+if [[ ! "$app" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
+  echo "invalid app name: $app" >&2
+  exit 1
+fi
+if [[ ! "$tag" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+  echo "invalid tag: $tag" >&2
+  exit 1
+fi
+if [[ ! "$container_port" =~ ^[0-9]+$ ]]; then
+  echo "invalid container port: $container_port" >&2
+  exit 1
+fi
+
+build_dir="$BUILD_DIR/$app"
+rm -rf "$build_dir"
+mkdir -p "$build_dir"
+# Reads the tarball the caller piped into this same ssh session -- see
+# the workflow example, which does `tar czf - . | ssh ...`.
+tar xzf - -C "$build_dir"
+
+# localhost/ explicitly, matching exactly what `podman build` itself
+# tags a registry-less name as -- an unqualified Image= can otherwise
+# send podman through short-name resolution (registries.conf) instead of
+# a plain local-storage lookup, depending on this host's short-name-mode.
+image="localhost/$app:$tag"
+podman build -t "$image" "$build_dir"
+rm -rf "$build_dir"
+
+# Assign a host port the first time this app is seen; reuse it on every
+# later deploy so the Caddy route and running unit never drift out from
+# under each other.
+port=$(awk -F'\t' -v a="$app" '$1==a{print $2; found=1} END{exit !found}' "$PORTS_FILE" 2>/dev/null) || port=""
+if [[ -z "$port" ]]; then
+  last=$(cut -f2 "$PORTS_FILE" 2>/dev/null | sort -n | tail -1)
+  port=$(( ${last:-$((BASE_PORT - 1))} + 1 ))
+  printf '%s\t%s\n' "$app" "$port" >> "$PORTS_FILE"
+fi
+
+cat > "$QUADLET_DIR/$app.container" <<EOF
+[Unit]
+Description=$app (appdeploy)
+
+[Container]
+Image=$image
+PublishPort=$port:$container_port
+Label=appdeploy=$app
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
+EOF
+
+systemctl --user daemon-reload
+if ! systemctl --user restart "$app.service"; then
+  echo "--- $app.service failed to start; recent journal: ---" >&2
+  journalctl --user -u "$app.service" --no-pager -n 40 >&2
+  exit 1
+fi
+
+# Caddy lives on its own host, not here or on container-sandbox -- this
+# host only runs app containers (see roles/appdeploy_caddy on the other
+# end). $app/$port were
+# already validated above; this key can only ever run caddy-route.sh
+# there regardless of what's sent, same as this script itself is the only
+# thing the CI key can ever reach.
+ssh -i "$CADDY_ROUTE_KEY" -o BatchMode=yes "containers@$CADDY_ROUTE_HOST" "$app" "$port"
+
+echo "deployed $app:$tag -> https://$app.$DOMAIN_SUFFIX ({{ ansible_default_ipv4.address }}:$port)"

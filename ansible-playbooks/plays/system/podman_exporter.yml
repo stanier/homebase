@@ -1,0 +1,7 @@
+---
+- name: Deploy podman_exporter (container metrics) to rootless-podman hosts
+  hosts: containers:apphost
+  become: true
+
+  roles:
+    - podman_exporter

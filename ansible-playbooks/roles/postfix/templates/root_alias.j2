@@ -1,0 +1,10 @@
+# Managed by ansible-playbooks (roles/postfix). texthash's own
+# "key value" lookup format (space-separated, no colon) -- deliberately
+# not /etc/aliases itself, which uses alias(5)'s "key: value" colon
+# syntax that texthash doesn't parse the way alias(5) does (it treats
+# "root:" -- colon included -- as the literal key, so a lookup for
+# "root" never matches; confirmed live via Postfix's own "record is in
+# 'key: value' format; is this an alias file?" warning).
+{% if postfix_root_alias_recipient | length > 0 %}
+root {{ postfix_root_alias_recipient }}
+{% endif %}

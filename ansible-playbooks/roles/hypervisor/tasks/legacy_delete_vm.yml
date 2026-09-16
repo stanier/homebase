@@ -1,0 +1,81 @@
+---
+# Legacy: prefer `scripts/tofu-with-vault-secrets.sh <env> destroy
+# -target=...` (proxmox-tofu/README.md's "Destroying a VM") for a host
+# actually managed by Tofu -- that's both testzone and dangerzone today.
+# This still has one thing Tofu's destroy doesn't (yet): the
+# confirm_delete safety check below. Tofu's own README notes it has
+# "no confirm_delete-style safety check ... -target plus reading the
+# plan output carefully is the only guard right now."
+#
+# Destroys inventory_hostname's VM via the Proxmox API, given
+# proxmox_node/proxmox_vmid in its own host_vars -- the same
+# "VM maintenance" convention plays/vm/snapshot_vm.yml and plays/system/update.yml's
+# pre-update snapshot use, not legacy_create_vm.yml's proxmox_vm block (that
+# only matters at initial-clone time and may not even still be set once
+# a host is fully onboarded). Run via
+# plays/vm/legacy_delete_vm.yml --tags legacy_delete_vm -l <host> -e confirm_delete=<host>.
+- name: Assert this host's Proxmox node/vmid are known
+  ansible.builtin.assert:
+    that:
+      - proxmox_node is defined
+      - proxmox_vmid is defined
+    fail_msg: >-
+      {{ inventory_hostname }} has no proxmox_node/proxmox_vmid set in
+      its host_vars -- nothing here to delete via the API.
+
+# -l already scopes which host(s) this runs against, but "hosts: all"
+# plus a forgotten or mistyped -l is exactly the kind of mistake that
+# destroys the wrong VM. This makes that mistake loud instead of silent:
+# confirm_delete has to be handed in explicitly and match this exact
+# host, so a run against the wrong target (or an unintended group) fails
+# instead of quietly destroying something.
+- name: Refuse to delete unless explicitly confirmed for this host
+  ansible.builtin.assert:
+    that: confirm_delete | default('') == inventory_hostname
+    fail_msg: >-
+      Refusing to delete {{ inventory_hostname }} (vmid {{ proxmox_vmid }})
+      without confirmation -- re-run with
+      -e confirm_delete={{ inventory_hostname }} once you're sure. This
+      destroys the VM and its disk(s); there's no undo short of a
+      pre-existing snapshot.
+
+- name: Look up this VM's Proxmox node's own API credentials
+  ansible.builtin.set_fact:
+    proxmox_vm_api_host: "{{ hostvars[proxmox_node].ansible_host }}"
+    proxmox_vm_api_user: "{{ hostvars[proxmox_node].proxmox_api_user }}"
+    proxmox_vm_api_token_id: "{{ hostvars[proxmox_node].proxmox_api_token_id }}"
+    proxmox_vm_api_token_secret: "{{ hostvars[proxmox_node].proxmox_api_token_secret }}"
+
+- name: "Destroy {{ inventory_hostname }} (vmid {{ proxmox_vmid }})"
+  community.proxmox.proxmox_kvm:
+    vmid: "{{ proxmox_vmid }}"
+    # Without force, the module just silently no-ops (changed=false, no
+    # error) on a running VM instead of deleting it -- same class of
+    # trap as state: present's update short-circuit elsewhere in this
+    # role. force stops it first instead. purge also clears this vmid
+    # out of any backup/replication job configs referencing it, so nothing
+    # is left pointing at a vmid that no longer exists.
+    force: true
+    purge: true
+    state: absent
+  module_defaults:
+    group/community.proxmox.proxmox:
+      api_host: "{{ proxmox_vm_api_host }}"
+      api_user: "{{ proxmox_vm_api_user }}"
+      api_token_id: "{{ proxmox_vm_api_token_id }}"
+      api_token_secret: "{{ proxmox_vm_api_token_secret }}"
+      validate_certs: "{{ proxmox_api_validate_certs }}"
+      api_timeout: "{{ proxmox_api_timeout }}"
+  delegate_to: localhost
+  # The module's own force+absent path waits for its shutdown API call to
+  # report done, then immediately fires the delete API call -- but
+  # qemu-server can still be holding /var/lock/qemu-server/lock-<vmid>.conf
+  # for a moment after the shutdown task itself reports finished, so that
+  # first delete attempt can lose the race ("can't lock file ... - got
+  # timeout"). Safe to retry: on the next attempt the module re-checks the
+  # VM's status, finds it already stopped (not running), skips straight to
+  # delete, and the lock has cleared by then.
+  register: proxmox_vm_delete
+  until: proxmox_vm_delete is succeeded
+  retries: 3
+  delay: 10

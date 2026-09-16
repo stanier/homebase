@@ -1,0 +1,23 @@
+---
+- name: Bring Gitea up before generating a runner registration token
+  # A fresh gitea host has no container running yet, so the token-generation
+  # task below (gated to inventory_hostname == 'gitea') would find nothing to
+  # `podman exec` into and fail_when: false its way to an empty token -- see
+  # that task's own comment in roles/containerapps/tasks/main.yml. Running
+  # the role against gitea alone first gets its container started, so by the
+  # time the play below reaches gitea again, generate-runner-token succeeds
+  # for real and gitea-runner-1 (targeted in the same play) picks up a
+  # working token in one podman.yml run.
+  hosts: gitea
+  become: true
+
+  roles:
+    - containerapps
+
+- name: Ensure rootless podman is installed and configured
+  hosts: containers
+  become: true
+
+  roles:
+    - containerapps
+#    - backup

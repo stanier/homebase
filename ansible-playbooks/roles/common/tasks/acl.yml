@@ -1,0 +1,21 @@
+---
+# The Rocky cloud image these VMs are cloned from ships a dnf cache
+# whose metadata/solv index still references package files that were
+# stripped out when the image itself was finalized (image build cleans
+# up cached rpms for size but leaves the index believing they're still
+# there) -- every clone of that same template hits this identically, not
+# just occasionally, so it needs clearing before the first real install
+# rather than relying on retry. Manifests as a FileNotFoundError on the
+# cached rpm path rather than a normal dnf/network error, since dnf
+# trusts its own cache index without checking the file exists first.
+- name: Clear the golden template's stale dnf cache before the first package install
+  ansible.builtin.command: dnf clean all
+  when: ansible_facts['pkg_mgr'] in ['dnf', 'dnf5']
+  changed_when: false
+
+- name: Install acl package for POSIX ACL support
+  ansible.builtin.package:
+    name: acl
+    state: present
+  tags:
+    - packages

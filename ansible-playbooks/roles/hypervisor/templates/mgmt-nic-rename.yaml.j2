@@ -1,0 +1,23 @@
+#cloud-config
+# Managed by ansible-playbooks (roles/hypervisor/tasks/create_vm.yml).
+# Delivered as this VM's cloud-init vendor-data (cicustom: vendor=...),
+# separate from Proxmox's own auto-generated user-data (ciuser/sshkeys)
+# and network-config (ipconfig0/ipconfig1) -- both keep working
+# unmodified alongside this file.
+#
+# Renames the management NIC to "{{ management_interface }}" by MAC
+# match, via a systemd .link file processed by udev at coldplug -- well
+# before cloud-init's own network stage runs. That stage's generated
+# netplan/NetworkManager config also matches this device by MAC (not by
+# kernel-assigned name), so the rename is transparent to management_ip's
+# static assignment on ipconfig1.
+write_files:
+  - path: /etc/systemd/network/10-{{ management_interface }}.link
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Match]
+      MACAddress={{ management_mac }}
+
+      [Link]
+      Name={{ management_interface }}

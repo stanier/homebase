@@ -1,0 +1,272 @@
+---
+# Legacy: both testzone and dangerzone now provision VMs through
+# proxmox-tofu instead (see plays/vm/provision_vms.yml and that repo's own
+# README) -- this Ansible-native path only remains as a fallback, e.g.
+# for a Proxmox node not yet wired into proxmox-tofu, or if Tofu/its
+# provider is unavailable. Not the supported default anymore.
+#
+# Clones inventory_hostname from its golden template (proxmox_vm.template)
+# into a real VM, per proxmox_vm in this host's own host_vars and
+# proxmox_vmid (hosts.ini, same id snapshot.yml uses) -- see
+# docs/Typical_Procedure.md. Run via plays/vm/legacy_create_vm.yml --tags legacy_create_vm
+# -l <newhost>, before that host exists/has SSH, so this whole play runs
+# with connection: local and every task talks to the Proxmox API on the
+# new VM's behalf instead of connecting to it directly.
+#
+# Idempotent, safe to re-run: cloning only happens once (guarded by the
+# "already exists" check below), and every task after it converges this
+# VM's config/power-state to what's declared here regardless of whether
+# it was just cloned or already existed -- e.g. after interrupting a
+# first run partway through, or picking up config changes made to an
+# existing host's proxmox_vm block since it was created.
+- name: Fail fast if this host has no proxmox_vm spec
+  ansible.builtin.assert:
+    that:
+      - proxmox_vm is defined
+      - proxmox_vm.node is defined
+      - proxmox_vm.template is defined
+      - proxmox_vmid is defined
+    fail_msg: >-
+      {{ inventory_hostname }} has no proxmox_vm (node/template) and/or
+      proxmox_vmid set -- add proxmox_vm to its host_vars and proxmox_vmid
+      to hosts.ini before running plays/vm/legacy_create_vm.yml. See
+      docs/Typical_Procedure.md.
+
+- name: Look up the target node's own settings, credentials, and template
+  ansible.builtin.set_fact:
+    proxmox_vm_template: "{{ hostvars[proxmox_vm.node].proxmox_templates[proxmox_vm.template] }}"
+    # All of these are properties of the target Proxmox node (turkey or
+    # homelab), looked up via hostvars rather than read directly -- this
+    # whole play runs against the new VM's own inventory entry (it's in
+    # [vm], not [proxmox]), which never sees group_vars/proxmox/*.yml.
+    # turkey/homelab also aren't clustered, so each has its own
+    # independent user/token database -- proxmox_api_user/token_id/
+    # token_secret are genuinely per-node (host_vars/turkey.yml,
+    # host_vars/homelab.yml), not just looked-up-the-same-way-out-of-caution.
+    proxmox_vm_api_host: "{{ hostvars[proxmox_vm.node].ansible_host }}"
+    proxmox_vm_api_user: "{{ hostvars[proxmox_vm.node].proxmox_api_user }}"
+    proxmox_vm_api_token_id: "{{ hostvars[proxmox_vm.node].proxmox_api_token_id }}"
+    proxmox_vm_api_token_secret: "{{ hostvars[proxmox_vm.node].proxmox_api_token_secret }}"
+    proxmox_vm_storage_pool: "{{ hostvars[proxmox_vm.node].proxmox_storage_pool }}"
+    proxmox_vm_pool: "{{ hostvars[proxmox_vm.node].proxmox_pool }}"
+    proxmox_vm_app_bridge: "{{ hostvars[proxmox_vm.node].proxmox_app_bridge }}"
+    proxmox_vm_mgmt_bridge: "{{ hostvars[proxmox_vm.node].proxmox_mgmt_bridge }}"
+    proxmox_vm_app_gateway: "{{ hostvars[proxmox_vm.node].proxmox_app_gateway }}"
+
+# Every community.proxmox.* task below shares these same five
+# credential/connection args (api_host/api_user/api_token_id/
+# api_token_secret/validate_certs/api_timeout) -- module_defaults sets
+# them once for the whole block instead of repeating the same dict on
+# every task.
+- module_defaults:
+    group/community.proxmox.proxmox:
+      api_host: "{{ proxmox_vm_api_host }}"
+      api_user: "{{ proxmox_vm_api_user }}"
+      api_token_id: "{{ proxmox_vm_api_token_id }}"
+      api_token_secret: "{{ proxmox_vm_api_token_secret }}"
+      validate_certs: "{{ proxmox_api_validate_certs }}"
+      api_timeout: "{{ proxmox_api_timeout }}"
+  block:
+    # Drives the "when" below on the clone task -- everything else in this
+    # file (disk resize, network/cloud-init config, start, wait-for-SSH) is
+    # already safe to reapply on its own (proxmox_disk's resize checks the
+    # current size first, proxmox_kvm's state: present + update/update_unsafe
+    # reconciles config idempotently, state: started no-ops if already
+    # running). Cloning is the one step that must not repeat: the module
+    # itself would just no-op (changed=false) on a vmid that already exists,
+    # but skipping it explicitly here avoids the pointless clone API call
+    # and keeps the "why nothing happened" story in this file instead of
+    # buried in the module's own already-exists check.
+    - name: Check whether this VM already exists
+      community.proxmox.proxmox_vm_info:
+        type: qemu
+        vmid: "{{ proxmox_vmid }}"
+      delegate_to: localhost
+      register: proxmox_vm_info
+
+    # Deterministic (re-run-safe) MAC for net1, built from management_mac_prefix
+    # + this VM's own vmid -- 6 hex digits is 3 bytes, plenty for any vmid this
+    # fleet will ever reach, and ties the address to a value that's already
+    # guaranteed unique per VM rather than inventing new per-host state to track.
+    # Only meaningful (and only used below) once management_mac_prefix is set;
+    # see roles/hypervisor/defaults/main.yml.
+    - name: Compute this VM's management NIC MAC address
+      ansible.builtin.set_fact:
+        management_mac: "{{ management_mac_prefix }}:{{ vmid_hex[0:2] }}:{{ vmid_hex[2:4] }}:{{ vmid_hex[4:6] }}"
+      vars:
+        vmid_hex: "{{ '%06x' % (proxmox_vmid | int) }}"
+      when: management_mac_prefix | length > 0
+
+    # Uploaded straight to the node's own filesystem (same pattern as
+    # build_template.yml staging images there) rather than via the API --
+    # community.proxmox has no module for arbitrary snippet-content uploads.
+    # Requires the target storage (proxmox_snippet_storage, "local" by
+    # default) to have its "Snippets" content type enabled already; see
+    # roles/hypervisor/defaults/main.yml. connection: ssh overrides this
+    # play's connection: local (needed for the API-only tasks around this
+    # one, since inventory_hostname itself has no SSH yet) -- without it,
+    # delegate_to still runs this locally on the control node as your own
+    # user instead of actually SSHing to proxmox_vm.node as its automation
+    # account, and become fails demanding a password that account doesn't
+    # need.
+    #
+    # ansible_python_interpreter is likewise pinned explicitly via
+    # hostvars[] -- delegate_to swaps connection details (host/user/key) to
+    # proxmox_vm.node, but Jinja inside a connection var (like the
+    # "{{ python_version }}" in ansible_python_interpreter's template)
+    # still resolves against inventory_hostname's own vars, not the
+    # delegated host's. inventory_hostname is [vm]/[containers], which
+    # inherits group_vars/all's newer default python_version, while
+    # proxmox_vm.node is [proxmox], pinned to an older one
+    # (group_vars/proxmox.yml) matching what's actually installed there --
+    # without this override the wrong, nonexistent interpreter path gets
+    # used on proxmox_vm.node.
+    - name: Render and upload the mgmt-NIC-rename cloud-init snippet
+      ansible.builtin.template:
+        src: mgmt-nic-rename.yaml.j2
+        dest: "/var/lib/vz/snippets/{{ inventory_hostname }}-mgmt-rename.yaml"
+        owner: root
+        group: root
+        mode: "0644"
+      delegate_to: "{{ proxmox_vm.node }}"
+      connection: ssh
+      vars:
+        ansible_python_interpreter: "{{ hostvars[proxmox_vm.node].ansible_python_interpreter }}"
+      become: true
+      when: management_mac_prefix | length > 0
+
+    - name: Clone the {{ proxmox_vm.template }} template
+      community.proxmox.proxmox_kvm:
+        node: "{{ proxmox_vm.node }}"
+        clone: "{{ proxmox_vm.template }}"
+        vmid: "{{ proxmox_vm_template.vmid }}"
+        newid: "{{ proxmox_vmid }}"
+        name: "{{ inventory_hostname }}"
+        storage: "{{ proxmox_vm_storage_pool }}"
+        pool: "{{ proxmox_vm_pool }}"
+        full: true
+        timeout: 300
+        state: present
+      when: proxmox_vm_info.proxmox_vms | length == 0
+
+    - name: Grow the cloned disk
+      community.proxmox.proxmox_disk:
+        vmid: "{{ proxmox_vmid }}"
+        disk: scsi0
+        size: "{{ proxmox_vm.disk_resize }}"
+        state: resized
+      when: proxmox_vm.disk_resize is defined
+
+    # net0/ipconfig0 is the app-serving VLAN, on the VM's primary NIC -- same
+    # address (app_ip) these hosts already carry today (see the comment at
+    # the top of inventory/*/hosts.ini). net1/ipconfig1 is the management
+    # VLAN (management_ip) -- roles/management_network then takes over from
+    # there (split routing, sshd ListenAddress), same as every other VM;
+    # it assumes this address is already live, it doesn't assign it itself.
+    #
+    # net1's MAC is pinned (once management_mac_prefix is set) so the rename
+    # snippet's udev .link file has a stable address to match against --
+    # without a pin, Proxmox would hand it a fresh random MAC on every clone
+    # and the .link file would never match. cicustom's vendor-data is the
+    # rename snippet itself; ipconfig1 above still does the actual address
+    # assignment unmodified, since cloud-init/netplan match net1 by MAC, not
+    # by whatever name it ends up with.
+    - name: Configure cloud-init networking and login for this VM
+      community.proxmox.proxmox_kvm:
+        node: "{{ proxmox_vm.node }}"
+        vmid: "{{ proxmox_vmid }}"
+        cores: "{{ proxmox_vm.cores | default(2) }}"
+        memory: "{{ proxmox_vm.memory | default(2048) }}"
+        cpu: "{{ proxmox_vm.cpu | default(proxmox_vm_cpu) }}"
+        vga: "{{ proxmox_vm.vga | default(proxmox_vm_vga) }}"
+        net:
+          net0: "virtio,bridge={{ proxmox_vm_app_bridge }}"
+          net1: >-
+            {{ 'virtio=' ~ management_mac ~ ',bridge=' ~ proxmox_vm_mgmt_bridge
+               if management_mac_prefix | length > 0
+               else 'virtio,bridge=' ~ proxmox_vm_mgmt_bridge }}
+        ipconfig:
+          ipconfig0: "ip={{ app_ip }}/{{ proxmox_network_prefix }},gw={{ proxmox_vm_app_gateway }}"
+          ipconfig1: "ip={{ management_ip }}/{{ proxmox_network_prefix }}"
+        ciuser: "{{ proxmox_vm_ciuser }}"
+        sshkeys: "{{ proxmox_vm_ssh_public_key }}"
+        nameservers: "{{ proxmox_vm_nameservers }}"
+        cicustom: "{{ 'vendor=' ~ proxmox_snippet_storage ~ ':snippets/' ~ inventory_hostname ~ '-mgmt-rename.yaml' if management_mac_prefix | length > 0 else omit }}"
+        state: present
+        # vmid already exists (just cloned above), so state: present needs
+        # update: true or this whole task silently no-ops -- and update
+        # itself still blocks net/ide/sata/scsi/virtio changes (net0/net1
+        # here) unless update_unsafe is also true. Without both, this VM
+        # would keep only the single mgmt-bridge NIC it inherited from the
+        # template's clone and never get its real app/management addresses,
+        # cloud-init user/keys, or the mgmt-NIC-rename snippet.
+        update: true
+        update_unsafe: true
+      register: proxmox_vm_netconfig
+
+    # net0/net1/ipconfig changes made above via update_unsafe only take effect
+    # in the guest on next boot -- cloud-init doesn't re-run against a live
+    # VM. So if that task actually changed anything on a VM that was already
+    # running (proxmox_vm_netconfig.changed on a pre-existing vmid), "started"
+    # would no-op and leave the guest running with its old network config,
+    # and the "Wait for SSH" task below would then time out against the new
+    # app_ip forever. Force a restart in that case; state: started (no-op if
+    # already running) is still correct for the common case of a freshly
+    # cloned, not-yet-started VM.
+    - name: Restart the VM to apply network config changes made to an already-running VM
+      community.proxmox.proxmox_kvm:
+        node: "{{ proxmox_vm.node }}"
+        vmid: "{{ proxmox_vmid }}"
+        state: restarted
+      when:
+        - proxmox_vm_info.proxmox_vms | length > 0
+        - proxmox_vm_netconfig.changed
+
+    - name: Start the VM
+      community.proxmox.proxmox_kvm:
+        node: "{{ proxmox_vm.node }}"
+        vmid: "{{ proxmox_vmid }}"
+        state: started
+      when: not (proxmox_vm_info.proxmox_vms | length > 0 and proxmox_vm_netconfig.changed)
+
+    # A fresh clone (this VM didn't exist before this run) generates a new
+    # SSH host key on first boot, but app_ip/management_ip are recycled --
+    # testzone rebuilds routinely reuse the same addresses. If a previous
+    # incarnation of this host was ever reached over SSH, its old host key
+    # is sitting in the controller's known_hosts under that address, and
+    # the new key will trip a hard host-key-mismatch failure (not just an
+    # unknown-host prompt) the moment onboarding.yml tries to connect.
+    # Dropping the stale entries here -- once, right after we know a new
+    # key is coming -- means the first real connection just sees a new,
+    # never-before-seen host and proceeds normally.
+    - name: Forget any stale host keys for this VM's addresses
+      ansible.builtin.known_hosts:
+        name: "{{ item }}"
+        state: absent
+      delegate_to: localhost
+      loop:
+        - "{{ app_ip }}"
+        - "{{ management_ip }}"
+      when: proxmox_vm_info.proxmox_vms | length == 0
+      # This task runs for every host in the same batch, all delegated to
+      # the same controller file (~/.ssh/known_hosts). The module shells out
+      # to ssh-keygen -R, which backs the file up to known_hosts.old via a
+      # hard link before editing it -- with several hosts hitting this at
+      # once, two ssh-keygen processes can race that link step and one fails
+      # with "File exists". throttle: 1 forces them one at a time so the
+      # backup-then-edit sequence never overlaps.
+      throttle: 1
+
+    - name: Wait for the new VM to answer SSH
+      ansible.builtin.wait_for:
+        # app_ip, not management_ip -- the latter isn't reachable yet: sshd
+        # doesn't bind to it and the split-routing rules that make replies
+        # over it work don't exist until roles/management_network actually
+        # runs on this host (plays/network/management_network.yml, a separate step
+        # from this play -- see docs/Typical_Procedure.md). app_ip is the
+        # one address guaranteed live off this VM's only default route at
+        # boot, so it's the real signal that cloud-init/sshd are up.
+        host: "{{ app_ip }}"
+        port: 22
+        delay: 5
+        timeout: 300

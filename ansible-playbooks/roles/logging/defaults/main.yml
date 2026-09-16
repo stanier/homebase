@@ -1,0 +1,6 @@
+---
+# Set to false on a host to stop forwarding (and tear down the config
+# this role previously laid down) without removing it from the play.
+syslog_forward_enabled: true
+
+syslog_forward_protocol: tcp

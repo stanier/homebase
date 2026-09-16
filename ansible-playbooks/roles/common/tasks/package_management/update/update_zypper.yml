@@ -1,0 +1,6 @@
+---
+# stub: openSUSE/SLES hosts
+- name: Update zypper packages
+  community.general.zypper:
+    name: "*"
+    state: latest
