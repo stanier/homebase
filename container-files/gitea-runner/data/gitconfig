@@ -1,2 +1,0 @@
-[http]
-	sslCAInfo = /etc/ssl/certs/homelab-root-ca.crt

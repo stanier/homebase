@@ -1,9 +1,0 @@
-log:
-  level: debug
-
-container:
-  docker_host: "-"
-
-runner:
-  labels:
-    - "ubuntu-latest:docker://localhost/gitea-runner-job:ubuntu-latest"

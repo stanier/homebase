@@ -1,7 +1,0 @@
-[Unit]
-Description=Build syslog image
-
-[Build]
-ImageTag=localhost/syslog
-File=Containerfile
-SetWorkingDirectory=/srv/containers/container-files/syslog
