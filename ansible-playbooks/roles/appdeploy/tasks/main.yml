@@ -95,6 +95,7 @@
   community.crypto.openssh_keypair:
     path: "{{ containers_home }}/.ssh/caddy_route_ed25519"
     type: ed25519
+    mode: "0600"
     owner: "{{ containers_user }}"
     group: "{{ containers_user }}"
   become_user: "{{ containers_user }}"

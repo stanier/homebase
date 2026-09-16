@@ -68,11 +68,23 @@ only ever reference the plain variable name.
 #### Example: root_password_hash
 
 `roles/common` sets the root password on every host using
-`root_password_hash`, sourced from `vault_root_password_hash`. Every other
-role (`default`, `boxship`, `hypervisor`, `workstation`) depends on
-`common` via its `meta/main.yml`, so the root password is applied
-consistently no matter which role(s) a play uses. Store a pre-hashed value
-in the vault, never plaintext — generate one with `mkpasswd -m sha-512` or
+`root_password_hash`, sourced from `vault_root_password_hash`. No role in
+this repo depends on `common` via `meta/main.yml` — consistency instead
+comes from `plays/system/onboarding.yml` (see
+`docs/Typical_Procedure.md`), which every real fleet host goes through
+first and which explicitly imports `common`'s `provisioning.yml` tasks;
+`plays/system/baseline_packages.yml` and `plays/system/update.yml` also
+pull `common` in directly for the same reason. That's a procedural
+guarantee (onboard first, always), not a dependency-graph one —
+`roles/hypervisor` in particular is deliberately left out of it, since
+two of its four consuming plays
+(`plays/vm/legacy/create_vm.yml`/`delete_vm.yml`) run with
+`connection: local` against the Ansible controller itself, where applying
+`common`'s host provisioning would be wrong. To (re)apply just the root
+password fleet-wide outside of onboarding, run
+`plays/system/root_password.yml` (its `provisioning`/`never` tags mean it
+only runs when tagged explicitly). Store a pre-hashed value in the vault,
+never plaintext — generate one with `mkpasswd -m sha-512` or
 `openssl passwd -6`.
 
 #### container-files secrets

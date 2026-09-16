@@ -26,6 +26,22 @@
       that doesn't exist would lock out SSH entirely.
   when: management_network_enabled and ssh_bind_management_only
 
+- name: Refuse to restrict sshd when split routing for management_gateway isn't active
+  ansible.builtin.assert:
+    that:
+      - management_gateway | default('') | length == 0
+    fail_msg: >-
+      management_gateway is set, but the split-routing tasks below that
+      keep SSH replies going out via that gateway are currently
+      commented out. Binding sshd exclusively to management_ip without
+      them means a reply to a connection that arrived via
+      management_gateway can leave out the wrong interface and get
+      dropped or blocked upstream as spoofed -- a plausible SSH
+      lockout. Re-enable the split-routing tasks above before turning
+      on ssh_bind_management_only for a host with a gateway, or leave
+      ssh_bind_management_only false for it.
+  when: management_network_enabled and ssh_bind_management_only
+
 # --- split routing -----------------------------------------------------
 # A host with a management network is multi-homed: it keeps its normal
 # default route out the LAN interface, but a connection that arrives on

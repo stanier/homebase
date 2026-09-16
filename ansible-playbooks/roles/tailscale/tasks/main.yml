@@ -45,6 +45,7 @@
 - name: Bring up Tailscale
   ansible.builtin.command: >
     tailscale up --authkey={{ tailscale_authkey }} {{ tailscale_extra_args }}
+  no_log: true
   when:
     - tailscale_enabled
     - tailscale_authkey != ''

@@ -23,6 +23,8 @@ is_excluded() {
   return 1
 }
 
+failed=0
+
 shopt -s nullglob
 for unit in "$QUADLET_DIR"/*.container; do
   service="$(basename "$unit" .container)"
@@ -48,12 +50,25 @@ for unit in "$QUADLET_DIR"/*.container; do
     fi
 
     echo "backing up $service: $path"
-    restic backup "$path" --tag "host={{ inventory_hostname }}" --tag "service=$service" --tag "volume=$src"
+    # A failed backup for one service/volume must not abort the loop --
+    # every other service still needs its chance to run, and retention
+    # below still needs to happen. `if !` (rather than relying on
+    # set -e) is what keeps this one command's failure from killing the
+    # rest of the script.
+    if ! restic backup "$path" --tag "host={{ inventory_hostname }}" --tag "service=$service" --tag "volume=$src"; then
+      echo "warning: restic backup failed for $service ($path)" >&2
+      failed=1
+    fi
   done < <(grep -h '^Volume=' "$unit" || true)
 done
 
-restic forget --prune \
+if ! restic forget --prune \
   --keep-daily {{ backup_retention_daily }} \
   --keep-weekly {{ backup_retention_weekly }} \
   --keep-monthly {{ backup_retention_monthly }} \
-  --tag "host={{ inventory_hostname }}"
+  --tag "host={{ inventory_hostname }}"; then
+  echo "warning: restic forget --prune failed" >&2
+  failed=1
+fi
+
+exit "$failed"

@@ -1,6 +1,10 @@
 ---
 collections:
+  # community.general.terraform -- plays/vm/provision_vms.yml.
   - name: community.general
+    version: ">=11.2.1"
   - name: community.proxmox
+  # ansible.posix.profile_tasks/timer callbacks -- ansible.cfg.
   - name: ansible.posix
+    version: ">=2.1.0"
   - name: community.crypto
