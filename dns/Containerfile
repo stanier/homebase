@@ -1,0 +1,17 @@
+FROM docker.io/library/alpine:3.20
+
+RUN apk add --no-cache bind bind-tools \
+    && mkdir -p /etc/bind/zones \
+    && chown -R named:named /etc/bind /var/bind
+
+COPY data/named.conf /etc/bind/named.conf
+
+RUN chown named:named /etc/bind/named.conf
+
+VOLUME /etc/bind/zones
+
+EXPOSE 5353/udp 5353/tcp
+
+USER named
+
+ENTRYPOINT ["named", "-g", "-c", "/etc/bind/named.conf"]

@@ -1,0 +1,16 @@
+[Unit]
+Description=Syslog receiver
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=syslog.build
+PublishPort=514:1514/udp
+PublishPort=514:1514/tcp
+Volume=/srv/containers/container-files/syslog/data/logs:/var/log/remote:z
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

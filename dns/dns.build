@@ -1,0 +1,7 @@
+[Unit]
+Description=Build dns image
+
+[Build]
+ImageTag=localhost/dns
+File=Containerfile
+SetWorkingDirectory=/srv/containers/container-files/dns

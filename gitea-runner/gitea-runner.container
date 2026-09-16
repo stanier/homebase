@@ -1,0 +1,25 @@
+[Unit]
+Description=Gitea Actions runner
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+# https://hub.docker.com/r/gitea/act_runner/tags.
+Image=docker.io/gitea/act_runner:0.6.1
+SecurityLabelDisable=true
+Environment=GITEA_RUNNER_NAME=homelab-runner
+Environment=CONFIG_FILE=/data/config.yaml
+Environment=DOCKER_HOST=unix:///var/run/docker.sock
+EnvironmentFile=/srv/containers/container-files/gitea-runner/.env
+Volume=/srv/containers/container-files/gitea-runner/data:/data
+Volume=/srv/containers/container-files/gitea-runner/data/root-ca.crt:/etc/ssl/certs/homelab-root-ca.crt:ro,z
+Volume=/srv/containers/container-files/gitea-runner/data/gitconfig:/etc/gitconfig:ro,z
+Volume=%t/podman/podman.sock:/var/run/docker.sock
+PodmanArgs=--memory=2g
+PidsLimit=2048
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
