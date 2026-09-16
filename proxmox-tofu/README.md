@@ -80,11 +80,12 @@ scripts/tofu-with-vault-secrets.sh testzone apply
 ```
 
 It prompts once for the vault password (same prompt as
-`ansible-playbooks/testrun.sh`), exports `TF_VAR_turkey_api_token_secret`
-/ `TF_VAR_homelab_api_token_secret` for that one process, and never
-writes the password or the tokens to disk. Assumes `ansible-playbooks` is
-a sibling checkout (same layout as this workspace's own symlinks); set
-`ANSIBLE_PLAYBOOKS_DIR` if yours lives elsewhere.
+`ansible-playbooks/testrun.sh`), exports one `TF_VAR_<alias>_api_token_secret`
+per Proxmox node (`node1`, `node2`, ... in that environment's `hosts.ini`
+`[proxmox]` group order — `turkey`/`homelab` today, matching
+`providers.tf`'s aliases) for that one process, and never writes the
+password or the tokens to disk. Assumes `ansible-playbooks` is a sibling
+checkout; set `ANSIBLE_PLAYBOOKS_DIR` if yours lives elsewhere.
 
 ## Importing the VMs that already exist
 
