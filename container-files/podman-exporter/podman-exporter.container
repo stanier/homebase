@@ -1,0 +1,16 @@
+[Unit]
+Description=Prometheus Podman Exporter
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=quay.io/navidys/prometheus-podman-exporter:v1.21.0
+Network=host
+Volume=%t/podman/podman.sock:/run/podman.sock:ro
+Exec=--collector.enable-all --socket unix:///run/podman.sock
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

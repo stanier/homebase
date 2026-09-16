@@ -1,0 +1,19 @@
+[Unit]
+Description=Node Exporter
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/prom/node-exporter:v1.12.1
+Network=host
+PodmanArgs=--pid=host
+Volume=/proc:/host/proc:ro
+Volume=/sys:/host/sys:ro
+Volume=/:/rootfs:ro
+Exec=--path.procfs=/host/proc --path.sysfs=/host/sys --path.rootfs=/rootfs --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($|/)
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
