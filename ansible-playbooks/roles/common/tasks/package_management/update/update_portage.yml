@@ -1,6 +1,0 @@
----
-# stub: Gentoo hosts
-- name: Update portage packages
-  community.general.portage:
-    package: "@world"
-    update: true

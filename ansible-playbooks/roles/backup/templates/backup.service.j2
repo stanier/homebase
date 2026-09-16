@@ -1,9 +1,0 @@
-# Managed by ansible-playbooks (roles/backup) -- edits here are
-# overwritten on the next run.
-[Unit]
-Description=Restic backup of this host's container volumes
-
-[Service]
-Type=oneshot
-EnvironmentFile={{ containers_home }}/backup/backup.env
-ExecStart={{ containers_home }}/backup/backup.sh

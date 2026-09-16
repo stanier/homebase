@@ -1,7 +1,0 @@
----
-firewall_enabled: false
-firewall_allow_ssh: true
-
-firewall_zone: public
-
-firewall_rules: []

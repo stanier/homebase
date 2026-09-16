@@ -1,9 +1,0 @@
----
-- block:
-  - import_tasks: set_hostname.yml
-  - import_tasks: set_root_password.yml
-  - import_tasks: provision_automation_user.yml
-  - import_tasks: security_packages.yml
-  - import_tasks: enable_epel.yml
-  - import_tasks: version_control.yml
-  tags: provisioning

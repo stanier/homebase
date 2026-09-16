@@ -1,6 +1,0 @@
----
-- name: Ensure system hostname matches its inventory_hostname
-  ansible.builtin.hostname:
-    name: "{{ inventory_hostname }}"
-  tags:
-    - hostname

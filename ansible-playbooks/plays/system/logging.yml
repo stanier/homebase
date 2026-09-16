@@ -1,7 +1,0 @@
----
-- name: Configure remote syslog forwarding
-  hosts: all
-  become: true
-
-  roles:
-    - logging

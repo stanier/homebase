@@ -1,9 +1,0 @@
-#!/bin/sh
-# Managed by ansible-playbooks (roles/management_network). Idempotent --
-# run on every boot by management-network-routing.service, safe to
-# re-run by hand too. See tasks/main.yml for why this exists: traffic
-# from management_ip needs to reply out {{ management_interface }} via
-# {{ management_gateway }}, not out the main default route.
-
-ip rule add from {{ management_ip }} table {{ management_route_table_name }} 2>&1 | grep -v "File exists" || true
-ip route replace default via {{ management_gateway }} dev {{ management_interface }} table {{ management_route_table_name }}

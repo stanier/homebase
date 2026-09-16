@@ -1,7 +1,0 @@
----
-- name: Install git package
-  ansible.builtin.package:
-    name: git
-    state: present
-  tags:
-    - baseline_packages

@@ -1,7 +1,0 @@
-# Managed by ansible-playbooks (roles/mail_server). Dovecot passwd-file
-# format (see dovecot/data/conf.d/10-auth.conf's passdb) -- fields after
-# the hash are userdb overrides, all left empty here since
-# 10-auth.conf's static userdb already supplies uid/gid/home.
-{% for mailbox in mail_server_virtual_mailboxes %}
-{{ mailbox.name }}@{{ mail_server_domain }}:{{ mailbox.password_hash }}::::::
-{% endfor %}

@@ -1,6 +1,0 @@
----
-- name: Snapshot a VM via the Proxmox API
-  hosts: all
-
-  roles:
-    - hypervisor

@@ -1,7 +1,0 @@
----
-- name: Deploy node_exporter (system metrics) to every host
-  hosts: all
-  become: true
-
-  roles:
-    - node_exporter
