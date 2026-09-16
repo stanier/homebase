@@ -1,0 +1,7 @@
+# Managed by ansible-playbooks (roles/mail_server). Recipient validation
+# for virtual_mailbox_maps -- the value is arbitrary and ignored by
+# Postfix, only the key (address) matters, so this doubles as a plain
+# list of every valid local mailbox.
+{% for mailbox in mail_server_virtual_mailboxes %}
+{{ mailbox.name }}@{{ mail_server_domain }} OK
+{% endfor %}

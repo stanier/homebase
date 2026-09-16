@@ -1,0 +1,16 @@
+---
+
+- name: Set up the app-build host
+  hosts: apphost
+  become: true
+
+  roles:
+    - appdeploy
+
+- name: Wire app-host's Caddy-route key into app-proxy
+  hosts: appproxy
+  become: true
+
+  roles:
+    - role: appdeploy_caddy
+      appdeploy_caddy_public_key: "{{ hostvars['app-host'].appdeploy_caddy_generated_pubkey }}"

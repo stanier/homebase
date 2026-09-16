@@ -1,0 +1,22 @@
+---
+podman_pkg_deps:
+  apt:
+    - uidmap
+    - slirp4netns
+    - fuse-overlayfs
+    - dbus-user-session
+  dnf:
+    - shadow-utils
+    - slirp4netns
+    - fuse-overlayfs
+  zypper:
+    - shadow
+    - slirp4netns
+    - fuse-overlayfs
+  pacman:
+    - slirp4netns
+    - fuse-overlayfs
+  apk:
+    - shadow-uidmap
+    - slirp4netns
+    - fuse-overlayfs

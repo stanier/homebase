@@ -1,0 +1,58 @@
+#!/bin/bash
+# Managed by ansible-playbooks (roles/appdeploy_caddy) -- edits here are
+# overwritten on the next run. Forced SSH command for the key apphost's
+# containers_user generated to reach this host (see roles/appdeploy) --
+# same command="..." trick as the CI key deploy.sh sits behind, so a
+# compromised apphost can only ever write one Caddy route file here and
+# trigger a reload, nothing else on container-sandbox.
+set -euo pipefail
+
+CADDY_APPS_DIR="{{ containers_home }}/appdeploy-state/caddy-apps"
+DOMAIN_SUFFIX="{{ appdeploy_domain_suffix }}"
+
+# shellcheck disable=SC2206
+args=(${SSH_ORIGINAL_COMMAND:-})
+app="${args[0]:-}"
+port="${args[1]:-}"
+
+if [[ -z "$app" || -z "$port" ]]; then
+  echo "usage: <app> <port>" >&2
+  exit 1
+fi
+if [[ ! "$app" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
+  echo "invalid app name: $app" >&2
+  exit 1
+fi
+if [[ ! "$port" =~ ^[0-9]+$ ]]; then
+  echo "invalid port: $port" >&2
+  exit 1
+fi
+
+# The connecting host's own address, straight from sshd -- not a
+# client-supplied argument, so whatever calls this can only ever route
+# to its own real address, never spoof some other target by just passing
+# a different IP.
+app_host="${SSH_CLIENT%% *}"
+if [[ -z "$app_host" ]]; then
+  echo "could not determine caller's address from SSH_CLIENT" >&2
+  exit 1
+fi
+
+# acme_tls is the snippet defined once at the top of caddy/data/Caddyfile
+# -- gets this app's cert from the shared internal ACME server (HTTP-01,
+# same as every other non-wildcard vhost there) instead of a per-instance
+# self-signed tls internal cert, so it's already trusted by anything that
+# trusts that one root, no separate import needed as apps come and go.
+cat > "$CADDY_APPS_DIR/$app.caddy" <<EOF
+$app.$DOMAIN_SUFFIX {
+	import acme_tls
+	reverse_proxy $app_host:$port
+}
+EOF
+
+# systemd-caddy, not caddy -- caddy.container sets no ContainerName=, and
+# no unit in this repo does, so Quadlet's default naming (systemd-<unit
+# name>) applies uniformly.
+podman exec systemd-caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+
+echo "routed $app.$DOMAIN_SUFFIX -> $app_host:$port"

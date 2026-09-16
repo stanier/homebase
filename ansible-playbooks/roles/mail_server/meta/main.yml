@@ -1,0 +1,10 @@
+---
+dependencies:
+  # containers_user (the OS account, not just the variable) needs to
+  # exist before this role can chown /srv/dovecot/* to it -- normally
+  # created by roles/containerapps' own boxship dependency, but that
+  # only runs in plays/apps/podman.yml, which runs *after*
+  # plays/apps/mail_server.yml (deliberately -- the TLS cert/users file
+  # need to exist before containerapps starts the dovecot quadlet).
+  # Same fix roles/containerapps itself uses for the identical problem.
+  - boxship

@@ -1,0 +1,57 @@
+---
+# Opt-in per host -- no-op unless a host_vars file sets this to true,
+# same convention as roles/firewall and roles/tailscale.
+management_network_enabled: false
+
+# Interface carrying the management network on this host -- a second
+# NIC (e.g. Rocky guests: ens19, alongside their normal ens18), not a
+# tagged sub-interface. This role assumes the interface already exists
+# and already has management_ip assigned -- it does not bring the
+# interface up or assign the address itself, since that setup differs
+# too much across the fleet's mix of NetworkManager (Rocky) and
+# Proxmox's ifupdown2 to be one task list. Required once
+# management_network_enabled is true.
+management_interface: ""
+
+# This host's IP on the management network, e.g. in 203.0.113.0/24
+# (no /prefix suffix). Required once management_network_enabled is
+# true.
+management_ip: ""
+
+# Gateway used ONLY for traffic that both originates from and returns
+# to management_ip -- e.g. SSHing in over the management network from
+# a workstation on it. Drives the split-routing tasks below (policy
+# routing + loosened rp_filter). Leave blank to skip those, e.g. if
+# 203.0.113.0/24 turns out to be an isolated, router-less L2 segment
+# where nothing needs a gateway at all.
+management_gateway: ""
+
+# Dedicated routing table for management-sourced traffic. Any small
+# unused id/name works; 100/mgmtvlan chosen to stay clear of the
+# well-known reserved tables (0, 253-255).
+management_route_table_id: 100
+management_route_table_name: mgmtvlan
+
+# rp_filter mode applied to management_interface only once split
+# routing is active (see tasks/main.yml -- deliberately never touches
+# conf.all, since that would loosen every other interface on the host
+# too). 2 = loose (RFC 3704), the mode multi-homed/asymmetric-routing
+# interfaces need; 1 = strict, the RHEL/Rocky default that would
+# otherwise drop mgmt-VLAN replies as spoofed.
+management_rp_filter_mode: 2
+
+# Bind sshd exclusively to management_ip instead of the default
+# 0.0.0.0/:: wildcard. This is the change that actually moves SSH onto
+# the management VLAN -- everything else in this role exists to make
+# that safe (split routing so replies don't get dropped, loose
+# rp_filter so the kernel doesn't drop them itself).
+ssh_bind_management_only: true
+
+# Zone the management interface is placed in when roles/firewall is
+# already active on this host (firewall_enabled: true). Additive only
+# -- it doesn't touch the existing public-zone SSH rule from
+# roles/firewall, so removing that (host_vars: firewall_allow_ssh:
+# false) once this role is confirmed working is a separate, deliberate
+# step for whoever owns that host, not something this role does for
+# you.
+management_firewalld_zone: internal

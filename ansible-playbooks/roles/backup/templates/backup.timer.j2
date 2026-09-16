@@ -1,0 +1,11 @@
+# Managed by ansible-playbooks (roles/backup) -- edits here are
+# overwritten on the next run.
+[Unit]
+Description=Daily restic backup of this host's container volumes
+
+[Timer]
+OnCalendar={{ backup_on_calendar }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target

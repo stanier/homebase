@@ -1,0 +1,9 @@
+---
+- name: restart podman_exporter
+  ansible.builtin.systemd:
+    name: prometheus-podman-exporter
+    scope: user
+    state: restarted
+  become_user: "{{ containers_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ containers_xdg_runtime_dir }}"

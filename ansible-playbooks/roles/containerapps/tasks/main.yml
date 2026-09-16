@@ -1,0 +1,487 @@
+---
+- name: Look up the containers user's uid
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ containers_user }}"
+
+- name: Compute containers user's XDG_RUNTIME_DIR once for this play
+  ansible.builtin.set_fact:
+    containers_xdg_runtime_dir: "/run/user/{{ getent_passwd[containers_user][1] }}"
+
+- name: Ensure containers user's podman config directory exists
+  ansible.builtin.file:
+    path: "{{ containers_home }}/.config/containers"
+    state: directory
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+    mode: "0700"
+
+- name: Configure rootless podman cgroup manager override
+  ansible.builtin.copy:
+    dest: "{{ containers_home }}/.config/containers/containers.conf"
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+    mode: "0644"
+    content: |
+      [engine]
+      cgroup_manager = "cgroupfs"
+  when: containerapps_cgroup_manager == "cgroupfs"
+
+- name: Remove rootless podman cgroup manager override
+  ansible.builtin.file:
+    path: "{{ containers_home }}/.config/containers/containers.conf"
+    state: absent
+  when: containerapps_cgroup_manager != "cgroupfs"
+
+- name: Lower the unprivileged-port floor for Network=host services that need it
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_unprivileged_port_start
+    value: "{{ containerapps_unprivileged_port_start }}"
+    sysctl_set: true
+    state: present
+    reload: true
+  when: containerapps_unprivileged_port_start != ""
+
+- name: Determine container-files repo host and port
+  ansible.builtin.set_fact:
+    # containerapps_repo is the ssh://user@host:port/path form (required
+    # for a non-default port -- see its own comment in group_vars/all),
+    # so both of these strip "ssh://user@" first, then split on the
+    # first remaining ":".
+    containerapps_git_host: "{{ containerapps_repo | regex_replace('^ssh://[^@]+@', '') | regex_replace(':.*$', '') }}"
+    containerapps_git_port: "{{ containerapps_repo | regex_replace('^ssh://[^@]+@[^:]+:', '') | regex_replace('/.*$', '') }}"
+  when: containerapps_source == "git"
+
+- name: Scan SSH host key for container-files repo host
+  # rsa, not ed25519 -- Gitea's built-in Go SSH server only offers an RSA
+  # host key here (confirmed via `ssh-keyscan -v`: "kex: host key
+  # algorithm: (no match)" when scanning for ed25519 specifically). This
+  # is the *server's* host key, unrelated to id_ed25519, the deploy key
+  # containers_user authenticates with as a client below.
+  ansible.builtin.command: "ssh-keyscan -t rsa -p {{ containerapps_git_port }} {{ containerapps_git_host }}"
+  register: containerapps_repo_hostkey
+  changed_when: false
+  delegate_to: localhost
+  become: false
+  when: containerapps_source == "git"
+
+- name: Ensure containers user's .ssh directory exists
+  ansible.builtin.include_tasks: ../../common/tasks/ensure_ssh_dir.yml
+  when: containerapps_source == "git"
+
+- name: Trust container-files repo host key for containers user
+  ansible.builtin.known_hosts:
+    # ssh-keyscan -p already wrote containerapps_repo_hostkey.stdout's own
+    # hostname field as "[host]:port" for this non-default port, so name=
+    # has to match that exact form -- a plain "name: containerapps_git_host"
+    # here would register under the wrong key and git would still fail to
+    # verify the host when it actually connects on 2222.
+    name: "[{{ containerapps_git_host }}]:{{ containerapps_git_port }}"
+    key: "{{ containerapps_repo_hostkey.stdout }}"
+    path: "{{ containers_home }}/.ssh/known_hosts"
+    state: present
+  become_user: "{{ containers_user }}"
+  when: containerapps_source == "git"
+
+- name: Generate SSH keypair for containers user
+  community.crypto.openssh_keypair:
+    path: "{{ containers_home }}/.ssh/id_ed25519"
+    type: ed25519
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+    mode: "0600"
+  become_user: "{{ containers_user }}"
+  register: containerapps_deploy_key
+  when: containerapps_source == "git"
+
+- name: Show public key to register as a Gitea deploy key
+  ansible.builtin.debug:
+    msg: >-
+      containers_user has no access to {{ containerapps_repo }} yet.
+      Add this public key as a deploy key (with read access) on the repo,
+      then re-run: {{ containerapps_deploy_key.public_key }}
+  when:
+    - containerapps_source == "git"
+    - containerapps_deploy_key.changed
+
+- name: Clone or update container-files repo
+  ansible.builtin.git:
+    repo: "{{ containerapps_repo }}"
+    dest: "{{ containerapps_dest }}"
+    version: "{{ containerapps_version }}"
+  become_user: "{{ containers_user }}"
+  register: containerapps_git_clone
+  when: containerapps_source == "git"
+
+- name: List files changed by this container-files update
+  # Bind-mounted config (e.g. promtail/data/promtail-config.yaml) isn't a
+  # quadlet unit file, so the per-unit-file sync task never notices it
+  # changed. This catches it by diffing the whole update instead, so a
+  # service restarts when anything in its directory changes -- not just
+  # its own unit files.
+  ansible.builtin.command:
+    cmd: "git diff --name-only {{ containerapps_git_clone.before }} {{ containerapps_git_clone.after }}"
+    chdir: "{{ containerapps_dest }}"
+  become_user: "{{ containers_user }}"
+  register: containerapps_changed_paths
+  changed_when: false
+  when:
+    - containerapps_source == "git"
+    - containerapps_git_clone.changed
+    - containerapps_git_clone.before is defined
+    - containerapps_git_clone.before != containerapps_git_clone.after
+
+- name: Install rsync for local sync of container-files
+  ansible.builtin.package:
+    name: rsync
+    state: present
+  when: containerapps_source == "local"
+
+- name: Sync container-files from local checkout
+  ansible.posix.synchronize:
+    src: "{{ containerapps_local_src }}/"
+    dest: "{{ containerapps_dest }}/"
+    delete: true
+    rsync_path: sudo rsync
+    # synchronize's rsync subprocess runs on the controller, not through
+    # the SSH connection plugin -- without this it silently drops
+    # ansible_ssh_common_args (hosts.ini's ProxyCommand jump host), and
+    # rsync tries to reach management_ip directly, which times out since
+    # the controller has no direct route to that VLAN.
+    use_ssh_args: true
+    rsync_opts:
+      - "--chown={{ containers_user }}:{{ containers_user }}"
+  when: containerapps_source == "local"
+
+- name: Ensure dns zone directory is writable by the container's unprivileged named user
+  # dns's zones/ is the first read-write bind mount in the fleet -- every
+  # other config is read-only. named runs as a non-root uid inside the
+  # container (uid 100), so under rootless Podman's default UID mapping,
+  # files the containers_user owns on the host appear as root:root from
+  # inside the container; named falls into "other" there, which a plain
+  # git checkout doesn't make writable. BIND needs to create/update a
+  # .jnl journal file here (and eventually rewrite the zone file itself)
+  # to handle the acme-updater key's dynamic DNS updates -- confirmed via
+  # "journal open failed... permission denied" in its own logs.
+  ansible.builtin.file:
+    path: "{{ containerapps_dest }}/dns/data/zones"
+    state: directory
+    mode: "a+rwX"
+    recurse: true
+  become_user: "{{ containers_user }}"
+  when: "'dns' in containerapps_quadlet_services"
+
+- name: Ensure syslog log directory is writable by the container's unprivileged rsyslog user
+  # syslog.container's rsyslogd runs as a non-root uid (see syslog/Containerfile),
+  # so under rootless Podman's default UID mapping it needs "other" write
+  # access on this bind mount to create its own per-sending-host
+  # directories at runtime -- same class of fix as dns's zones/ above.
+  # Not recursive and no ongoing fix needed for content rsyslogd creates
+  # itself: rsyslog.conf's own $DirCreateMode/$FileCreateMode keep those
+  # readable by promtail (a separate container/uid) without ansible
+  # having to revisit this after every new sending host shows up.
+  ansible.builtin.file:
+    path: "{{ containerapps_dest }}/syslog/data/logs"
+    state: directory
+    mode: "a+rwX"
+  become_user: "{{ containers_user }}"
+  when: "'syslog' in containerapps_quadlet_services"
+
+- name: Ensure caddy-apps directory exists
+  # caddy.container always bind-mounts appdeploy-state/caddy-apps (see
+  # container-files/caddy/caddy.container), even on a host where
+  # roles/appdeploy_caddy never runs -- that role only targets the
+  # appproxy group, but this quadlet can land on any host in
+  # containerapps_quadlet_services (e.g. container-sandbox). Without
+  # this, podman fails the mount with "statfs: no such file or
+  # directory" and caddy.service never starts. Idempotent alongside
+  # appdeploy_caddy's identical task -- whichever role runs first wins,
+  # the other is a no-op.
+  ansible.builtin.file:
+    path: "{{ containers_home }}/appdeploy-state/caddy-apps"
+    state: directory
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+    mode: "0750"
+  when: "'caddy' in containerapps_quadlet_services"
+
+- name: Ensure gitea data/config directories exist and are writable by its unprivileged uid
+  # gitea.container bind-mounts fixed /srv/gitea/data and /srv/gitea/config
+  # paths (not under containers_home like everything else -- deliberately
+  # outside the synced container-files tree, so a redeploy/rsync never
+  # touches gitea's actual repo data). Nothing else ever created them, so
+  # podman failed the mount with "statfs: no such file or directory" and
+  # gitea.service never started. gitea:1.26.4-rootless runs as its own
+  # non-root uid inside the container (the whole point of the -rootless
+  # image), which under rootless Podman's default UID mapping doesn't
+  # match containers_user on the host -- it falls into "other" -- so
+  # this needs the same a+rwX treatment as dns's zones/ directory above,
+  # not just an owner/group grant.
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+    mode: "a+rwX"
+  loop:
+    - /srv/gitea/data
+    - /srv/gitea/config
+  when: "'gitea' in containerapps_quadlet_services"
+
+- name: Ensure parent directories exist for templated secret files
+  # item.dest is normally relative to containerapps_dest (e.g.
+  # caddy/data/Caddyfile), but a leading "/" opts a file out of that --
+  # needed for config that a quadlet bind-mounts from outside the synced
+  # container-files tree on purpose, e.g. gitea's /srv/gitea/config/app.ini
+  # (see "Ensure gitea data/config directories exist" above). Absolute
+  # entries should usually set dir_mode to match whatever that other task
+  # already set on the directory, since this task manages the same path.
+  ansible.builtin.file:
+    path: "{{ (item.dest | dirname) if item.dest.startswith('/') else (containerapps_dest + '/' + (item.dest | dirname)) }}"
+    state: directory
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+    mode: "{{ item.dir_mode | default('0700') }}"
+  become_user: "{{ containers_user }}"
+  loop: "{{ containerapps_secret_files | default([]) }}"
+  loop_control:
+    label: "{{ item.dest }}"
+
+- name: Write templated secret files for container services
+  ansible.builtin.copy:
+    dest: "{{ item.dest if item.dest.startswith('/') else containerapps_dest + '/' + item.dest }}"
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+    mode: "{{ item.mode | default('0600') }}"
+    content: "{{ item.content }}"
+  become_user: "{{ containers_user }}"
+  loop: "{{ containerapps_secret_files | default([]) }}"
+  loop_control:
+    label: "{{ item.dest }}"
+  register: containerapps_secret_files_write
+  no_log: true
+
+- name: Determine which quadlet-managed services had non-unit-file changes
+  # Two sources feed this: a git diff of the container-files clone (for
+  # config that's still a plain tracked file, e.g.
+  # promtail/data/promtail-config.yaml -- see the task above), and the
+  # just-written containerapps_secret_files
+  # (for config that's templated from inventory instead, e.g.
+  # vmagent/data/vmagent-config.yaml -- a git diff can never see those
+  # change since their content only exists in host_vars, not in the repo).
+  # Either way, a service whose directory saw one of these non-unit-file
+  # changes gets its units restarted below, not just started.
+  #
+  # A secret_files item's service is normally inferred from its dest's
+  # leading path segment (e.g. caddy/data/Caddyfile -> caddy), but an
+  # absolute dest outside containerapps_dest (e.g. gitea's
+  # /srv/gitea/config/app.ini) has no such segment to infer from, so it
+  # must set item.service explicitly instead.
+  ansible.builtin.set_fact:
+    containerapps_quadlet_data_changed: >-
+      {{
+        (
+          (containerapps_changed_paths.stdout_lines | default([])
+            | map('regex_replace', '^([^/]+)/.*$', '\1') | list)
+          +
+          (containerapps_secret_files_write.results | default([])
+            | selectattr('changed')
+            | selectattr('item.service', 'defined')
+            | map(attribute='item.service') | list)
+          +
+          (containerapps_secret_files_write.results | default([])
+            | selectattr('changed')
+            | rejectattr('item.service', 'defined')
+            | map(attribute='item.dest')
+            | map('regex_replace', '^([^/]+)/.*$', '\1') | list)
+        )
+        | unique
+        | intersect(containerapps_quadlet_services + containerapps_quadlet_services_disabled)
+      }}
+
+- name: Check whether gitea-runner has already registered with Gitea
+  # act_runner writes this itself once registration succeeds, and from
+  # then on ignores GITEA_RUNNER_REGISTRATION_TOKEN entirely (its real
+  # identity lives here instead). Checking it lets the task below skip
+  # asking Gitea for a token it would never be used -- without this, a
+  # fresh token (and therefore a changed .env, see the restart-detection
+  # task further down) on literally every run would restart gitea-runner
+  # on every podman.yml run forever, killing whatever CI job it happened
+  # to be mid-run. delegate_to instead of hostvars/ordering tricks so
+  # this works regardless of whether gitea-runner-1 is even in the
+  # current play's host list (e.g. a pass that only targets gitea).
+  ansible.builtin.stat:
+    path: "{{ containerapps_dest }}/gitea-runner/data/.runner"
+  delegate_to: gitea-runner-1
+  register: containerapps_gitea_runner_registered
+  when: inventory_hostname == 'gitea'
+
+- name: Generate a fresh Gitea Actions runner registration token
+  # Only reached before gitea-runner's first successful registration (see
+  # the check above) -- once registered, generating a new token here would
+  # be pure churn, since act_runner would never look at it. systemd-gitea
+  # is Quadlet's default container name for gitea.container (no
+  # ContainerName= override) -- see gitea/gitea.container.
+  #
+  # Requires gitea's own container to already be up, which it won't be on
+  # a truly fresh host's very first pass through this role (this task runs
+  # before "Deploy and start each quadlet-managed service" below, so gitea
+  # hasn't started yet in that same pass). failed_when: false tolerates
+  # that instead of failing the whole play for every host in the
+  # containers group -- gitea-runner's registration token would otherwise
+  # come out empty and act_runner would fail to register. plays/apps/podman.yml
+  # runs this role against gitea alone first for exactly this reason: by
+  # the time the second, full-fleet play reaches gitea again, its container
+  # is already up from that first pass, so this succeeds for real and
+  # gitea-runner-1 (targeted in that same second play) picks up a working
+  # token. Any run after gitea-runner-1 has registered is where the "once
+  # registered, skip" guard above matters -- without it, every later run
+  # would generate yet another unused token, see the resulting .env as
+  # changed, and restart gitea-runner for no reason.
+  ansible.builtin.command:
+    cmd: podman exec systemd-gitea gitea actions generate-runner-token
+  become_user: "{{ containers_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ containers_xdg_runtime_dir }}"
+  register: containerapps_gitea_runner_token
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: >-
+    inventory_hostname == 'gitea' and
+    'gitea' in containerapps_quadlet_services and
+    not (containerapps_gitea_runner_registered.stat.exists | default(false))
+
+- name: Expose the generated runner token for gitea-runner's .env
+  ansible.builtin.set_fact:
+    gitea_runner_registration_token: "{{ containerapps_gitea_runner_token.stdout | trim }}"
+  no_log: true
+  when: >-
+    inventory_hostname == 'gitea' and
+    containerapps_gitea_runner_token.rc is defined and
+    containerapps_gitea_runner_token.rc == 0
+
+- name: Write per-service .env files with secrets
+  ansible.builtin.copy:
+    dest: "{{ containerapps_dest }}/{{ item.key }}/.env"
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+    mode: "0600"
+    content: |
+      {% for env_name, env_value in item.value.items() %}
+      {{ env_name }}={{ env_value }}
+      {% endfor %}
+  become_user: "{{ containers_user }}"
+  loop: "{{ containerapps_env | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: item.key in containerapps_quadlet_services
+  register: containerapps_env_files_write
+  no_log: true
+
+- name: Include changed .env files in the quadlet restart-detection
+  # Computed as its own follow-up rather than folded into the
+  # "Determine which quadlet-managed services..." fact above, since that
+  # one runs before the token-generation tasks and this one has to run
+  # after the .env write it's inspecting. Without this, a service whose
+  # only change was its .env content (e.g. gitea-runner picking up a
+  # freshly generated token) would never actually get restarted --
+  # systemd: state=started is a no-op against an already-running unit.
+  ansible.builtin.set_fact:
+    containerapps_quadlet_data_changed: >-
+      {{
+        (containerapps_quadlet_data_changed
+          + (containerapps_env_files_write.results | default([])
+              | selectattr('changed')
+              | map(attribute='item.key') | list)
+        ) | unique
+      }}
+
+- name: Enable lingering for containers user
+  # Without lingering, /run/user/<uid> and the user D-Bus only exist while a
+  # real login session is active. This host's become path doesn't register
+  # with systemd-logind (see containerapps_cgroup_manager above), so without
+  # this, every `scope: user` systemd task below has nothing to connect to.
+  ansible.builtin.command: "loginctl enable-linger {{ containers_user }}"
+  args:
+    creates: "/var/lib/systemd/linger/{{ containers_user }}"
+
+- name: Export XDG_RUNTIME_DIR/DBUS_SESSION_BUS_ADDRESS for interactive containers-user shells
+  # `sudo -u containers bash` is a non-login shell (sources .bashrc, not
+  # .profile) and doesn't go through logind/pam_systemd the way a real
+  # login does, so neither var is set -- `systemctl --user` and `podman
+  # exec` commands typed by hand then fail with "Failed to connect to bus"
+  # or connect to the wrong (root) podman. Guarded so it never overrides a
+  # real login session that already set these correctly.
+  ansible.builtin.blockinfile:
+    path: "{{ containers_home }}/.bashrc"
+    create: true
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+    mode: "0644"
+    marker: "# {mark} ANSIBLE MANAGED BLOCK -- XDG session vars"
+    block: |
+      if [ -z "$XDG_RUNTIME_DIR" ]; then
+          export XDG_RUNTIME_DIR="{{ containers_xdg_runtime_dir }}"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR}/bus"
+      fi
+
+- name: Build custom gitea-runner job container image
+  # gitea-runner's config.yaml (runner.labels) points "ubuntu-latest" at this
+  # local tag instead of the upstream image, so job containers spun up for
+  # workflow runs already trust our internal root CA -- baked in here via
+  # update-ca-certificates rather than injected at container-create time,
+  # since env vars/mounts passed to job containers never reach the actual
+  # git process act_runner's checkout logic runs (see gitea-runner's own
+  # Containerfile and config.yaml for the full story). Not a quadlet .build
+  # unit because nothing here references it via Image=, so quadlet would
+  # never trigger the build automatically -- run it directly instead.
+  # podman build's own layer caching keeps repeat runs cheap.
+  ansible.builtin.command:
+    cmd: podman build -t localhost/gitea-runner-job:ubuntu-latest -f Containerfile .
+    chdir: "{{ containerapps_dest }}/gitea-runner"
+  become_user: "{{ containers_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ containers_xdg_runtime_dir }}"
+  when: "'gitea-runner' in containerapps_quadlet_services"
+  register: containerapps_gitea_runner_build
+  changed_when: "'Writing manifest' in containerapps_gitea_runner_build.stderr"
+
+- name: Enable podman API socket for containers user
+  ansible.builtin.systemd:
+    name: podman.socket
+    scope: user
+    state: started
+    enabled: true
+  become_user: "{{ containers_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ containers_xdg_runtime_dir }}"
+  register: containerapps_podman_socket
+  retries: 5
+  delay: 3
+  until: containerapps_podman_socket is succeeded
+
+- name: Ensure containers user's quadlet unit directory exists
+  ansible.builtin.file:
+    path: "{{ containers_home }}/.config/containers/systemd"
+    state: directory
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+    mode: "0755"
+  when: (containerapps_quadlet_services + containerapps_quadlet_services_disabled) | length > 0
+
+- name: Deploy and start each quadlet-managed service
+  ansible.builtin.include_tasks: quadlet_service.yml
+  loop: "{{ containerapps_quadlet_services }}"
+  loop_control:
+    loop_var: containerapps_quadlet_service
+    label: "{{ containerapps_quadlet_service }}"
+
+- name: Deploy (but don't start) each disabled quadlet-managed service
+  ansible.builtin.include_tasks: quadlet_service.yml
+  vars:
+    containerapps_quadlet_service_enabled: false
+  loop: "{{ containerapps_quadlet_services_disabled }}"
+  loop_control:
+    loop_var: containerapps_quadlet_service
+    label: "{{ containerapps_quadlet_service }}"

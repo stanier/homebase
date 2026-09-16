@@ -1,0 +1,114 @@
+---
+# "Poor man's Dokku": a forced-command SSH key runs deploy.sh, which
+# builds and runs whatever app/tag/port a Gitea Actions workflow asks
+# for. See templates/deploy.sh.j2 for the actual logic; everything here
+# just gets that script (and its state dirs) onto the host and locks the
+# CI key down to running only it.
+#
+# This host runs the apps themselves -- deliberately its own box, apart
+# from both container-sandbox (the rest of the infra fleet) and
+# appdeploy_caddy_route_hostname (Caddy itself, also its own box). See
+# roles/appdeploy_caddy for the other half: deploy.sh here can't write
+# straight to Caddy's config since it's not on the same filesystem, so it
+# SSHes out through a second, equally narrow forced-command key instead.
+
+- name: Look up the containers user's uid
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ containers_user }}"
+
+- name: Ensure appdeploy directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+    mode: "0750"
+  loop:
+    - "{{ containers_home }}/appdeploy"
+    - "{{ containers_home }}/appdeploy/state"
+    # Each deploy's build context is tar-streamed in over stdin and
+    # extracted here, then podman-built and removed -- see deploy.sh.j2.
+    - "{{ containers_home }}/appdeploy/build"
+    # Usually already created by containerapps (see its own copy of this
+    # task), but appdeploy doesn't depend on that role, so ensure it here
+    # too in case this host only ever runs appdeploy.
+    - "{{ containers_home }}/.config/containers/systemd"
+
+- name: Ensure ports.tsv exists
+  ansible.builtin.copy:
+    dest: "{{ containers_home }}/appdeploy/state/ports.tsv"
+    content: ""
+    force: false
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+    mode: "0640"
+
+- name: Install deploy.sh
+  ansible.builtin.template:
+    src: deploy.sh.j2
+    dest: "{{ containers_home }}/appdeploy/deploy.sh"
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+    mode: "0750"
+
+- name: Ensure containers user's .ssh directory exists
+  ansible.builtin.include_tasks: ../../common/tasks/ensure_ssh_dir.yml
+
+- name: Restrict the CI deploy key to running deploy.sh only
+  ansible.posix.authorized_key:
+    user: "{{ containers_user }}"
+    key: "{{ appdeploy_ci_public_key }}"
+    # No whitespace anywhere in this value outside the quoted command --
+    # sshd's authorized_keys options list is comma-separated with the
+    # whole list terminated by the first unquoted whitespace, so even one
+    # stray space (e.g. from a YAML folded ">-" block joining lines with
+    # spaces, which is what actually broke this the first time) silently
+    # truncates the options and corrupts the key entry, killing pubkey
+    # auth entirely with no useful error beyond a fallback to password.
+    key_options: "command=\"{{ containers_home }}/appdeploy/deploy.sh\",no-agent-forwarding,no-X11-forwarding,no-port-forwarding,no-pty"
+    state: present
+  when: appdeploy_ci_public_key | length > 0
+
+# The other half of this exchange: appdeploy_caddy (roles/appdeploy_caddy),
+# on appdeploy_caddy_route_hostname, restricts whatever key shows up here
+# to running only its own caddy-route.sh, the same way the CI key above
+# is restricted to deploy.sh -- so this host being compromised only ever
+# lets an attacker write one Caddy route file and trigger a reload, not
+# touch anything else on that host.
+- name: Scan SSH host key for the Caddy host
+  ansible.builtin.command: "ssh-keyscan -t ed25519 {{ hostvars[appdeploy_caddy_route_hostname].ansible_host }}"
+  register: appdeploy_caddy_host_hostkey
+  changed_when: false
+  delegate_to: localhost
+  become: false
+
+- name: Trust the Caddy host's key for containers user
+  ansible.builtin.known_hosts:
+    name: "{{ hostvars[appdeploy_caddy_route_hostname].ansible_host }}"
+    key: "{{ appdeploy_caddy_host_hostkey.stdout }}"
+    path: "{{ containers_home }}/.ssh/known_hosts"
+    state: present
+  become_user: "{{ containers_user }}"
+
+- name: Generate SSH keypair for reaching the Caddy host's caddy-route.sh
+  community.crypto.openssh_keypair:
+    path: "{{ containers_home }}/.ssh/caddy_route_ed25519"
+    type: ed25519
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+  become_user: "{{ containers_user }}"
+
+- name: Read back the generated caddy-route public key
+  ansible.builtin.slurp:
+    src: "{{ containers_home }}/.ssh/caddy_route_ed25519.pub"
+  register: appdeploy_caddy_route_pubkey_raw
+
+- name: Expose the caddy-route public key for the Caddy host's play to pick up
+  ansible.builtin.set_fact:
+    appdeploy_caddy_generated_pubkey: "{{ appdeploy_caddy_route_pubkey_raw.content | b64decode | trim }}"
+
+- name: Push CI deploy key and DEPLOY_HOST into Gitea's user-level Actions config
+  ansible.builtin.include_tasks: gitea_ci_integration.yml
+  when: gitea_ci_api_token | length > 0
+  tags: appdeploy_gitea_ci
