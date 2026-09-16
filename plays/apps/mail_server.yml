@@ -1,0 +1,7 @@
+---
+- name: Configure mail1 as the mail delivery host
+  hosts: mail_server
+  become: true
+
+  roles:
+    - mail_server

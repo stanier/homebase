@@ -1,0 +1,18 @@
+---
+appdeploy_ci_public_key: ""
+appdeploy_caddy_route_hostname: app-proxy
+appdeploy_domain_suffix: "apps.{{ base_domain }}"
+appdeploy_base_port: 20000
+
+# Empty by default so a host that hasn't set up Gitea CI integration yet
+# (or an environment with no gitea_ci_api_token vaulted) just skips
+# gitea_ci_integration.yml entirely instead of failing.
+appdeploy_ci_private_key: ""
+gitea_ci_api_token: ""
+# Gitea's own host, reached directly over its container's published port
+# rather than through the public HTTPS vhost -- avoids needing the
+# control node (or wherever this task ends up running) to trust the
+# internal root CA just to make one API call. Matches how
+# roles/containerapps already reaches gitea directly (podman exec) for
+# the runner-token flow instead of going through Caddy.
+appdeploy_gitea_api_base: "http://{{ hostvars['gitea'].ansible_host }}:3000/api/v1"

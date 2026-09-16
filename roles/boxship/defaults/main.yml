@@ -1,0 +1,17 @@
+---
+containers_user: containers
+containers_home: /srv/containers
+
+# nologin by default -- this account is meant to be reached only via
+# become_user, never logged into directly. Override per-host (e.g. to
+# /bin/bash) only when something needs inbound SSH as this user, such as
+# appdeploy's forced-command deploy key -- sshd always execs the
+# account's login shell to run a command, so a nologin shell silently
+# eats even an authorized_keys command= restriction, forced-command or
+# not.
+containers_user_shell: /usr/sbin/nologin
+
+# Extra supplementary groups for the containers user, e.g. "kvm" so
+# rootless podman can access /dev/kvm for a service that needs hardware
+# virtualization (see host_vars/windows.yml).
+containers_user_groups: []

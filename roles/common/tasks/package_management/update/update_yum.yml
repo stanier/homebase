@@ -1,0 +1,6 @@
+---
+# stub: yum-based hosts (older RHEL/CentOS)
+- name: Update yum packages
+  ansible.builtin.yum:
+    name: "*"
+    state: latest

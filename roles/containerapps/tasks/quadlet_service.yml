@@ -1,0 +1,80 @@
+---
+# Included once per containerapps_quadlet_service. A service's directory may
+# own more than one quadlet unit -- e.g. caddy's caddy.build +
+# caddy.container, or authentik's postgresql/redis/server/worker.container
+# plus authentik.network -- so this discovers and syncs all of them rather
+# than assuming a single <service>.container file.
+#
+# Only *.container/*.pod files produce a directly-startable <name>.service;
+# *.network/*.volume/*.build units are pulled in automatically as
+# dependencies by whichever .container/.pod references them, so they're
+# synced but never started directly here.
+#
+# containerapps_quadlet_service_enabled (default true) controls whether any
+# of a service's units actually get started/restarted here. Set it false for
+# a service whose unit file(s) should be deployed but left stopped -- e.g.
+# one that's expensive to run and not currently wanted. Pair that with
+# omitting the unit's own [Install] section so it also doesn't get
+# auto-started at boot.
+#
+# A restart also fires when containerapps_quadlet_data_changed (computed
+# once in main.yml from a git diff of this update) includes this service --
+# covers bind-mounted config that isn't itself a quadlet unit file, e.g.
+# dns/data/named.conf, which the per-file sync-changed check below can't see.
+
+- name: "Find quadlet unit files for {{ containerapps_quadlet_service }}"
+  ansible.builtin.find:
+    paths: "{{ containerapps_dest }}/{{ containerapps_quadlet_service }}"
+    patterns: "*.container,*.volume,*.network,*.pod,*.build"
+  become_user: "{{ containers_user }}"
+  register: containerapps_quadlet_service_files
+
+- name: "Sync quadlet unit files for {{ containerapps_quadlet_service }}"
+  ansible.builtin.copy:
+    remote_src: true
+    src: "{{ item.path }}"
+    dest: "{{ containers_home }}/.config/containers/systemd/{{ item.path | basename }}"
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+    mode: "0644"
+  become_user: "{{ containers_user }}"
+  loop: "{{ containerapps_quadlet_service_files.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  register: containerapps_quadlet_service_sync
+
+- name: "Reload systemd user daemon for {{ containerapps_quadlet_service }}"
+  ansible.builtin.systemd:
+    daemon_reload: true
+    scope: user
+  become_user: "{{ containers_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ containers_xdg_runtime_dir }}"
+
+- name: "Start or restart {{ containerapps_quadlet_service }} units"
+  ansible.builtin.systemd:
+    name: "{{ (item.item.path | basename).rsplit('.', 1)[0] }}.service"
+    scope: user
+    # Restarts if this unit file itself changed, OR if anything else in the
+    # service's directory changed (bind-mounted config, etc. -- see
+    # containerapps_quadlet_data_changed in main.yml).
+    state: >-
+      {{ 'restarted'
+         if (item.changed or containerapps_quadlet_service in (containerapps_quadlet_data_changed | default([])))
+         else 'started' }}
+  become_user: "{{ containers_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ containers_xdg_runtime_dir }}"
+  loop: "{{ containerapps_quadlet_service_sync.results }}"
+  loop_control:
+    label: "{{ item.item.path | basename }}"
+  when:
+    - containerapps_quadlet_service_enabled | default(true)
+    - item.item.path.endswith('.container') or item.item.path.endswith('.pod')
+  # Transient right after loginctl enable-linger first takes effect: the old
+  # (pre-linger) user manager instance can still have exit.target mid-
+  # transaction, colliding with this start job. Retries clear it in practice.
+  register: containerapps_quadlet_service_start
+  retries: 3
+  delay: 3
+  until: containerapps_quadlet_service_start is succeeded

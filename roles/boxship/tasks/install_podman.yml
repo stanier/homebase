@@ -1,0 +1,6 @@
+---
+- name: Install podman and rootless dependencies
+  ansible.builtin.package:
+    name: "{{ ['podman'] + podman_pkg_deps[ansible_facts['pkg_mgr']] }}"
+    state: present
+    update_cache: true

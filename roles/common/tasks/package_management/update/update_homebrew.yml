@@ -1,0 +1,6 @@
+---
+# stub: macOS hosts
+- name: Update homebrew packages
+  community.general.homebrew:
+    update_homebrew: true
+    upgrade_all: true

@@ -1,0 +1,7 @@
+---
+- name: Configure management VLAN networking
+  hosts: all
+  become: true
+
+  roles:
+    - management_network

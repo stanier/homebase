@@ -1,0 +1,8 @@
+---
+# Opt-out per host -- every host gets node_exporter unless this is set
+# false in host_vars. Installed from EPEL (see roles/common's
+# enable_epel task, which every host already runs), not a Quadlet
+# container, so it covers bare-metal/hypervisor hosts that never run
+# podman at all, not just the [containers] group.
+node_exporter_enabled: true
+node_exporter_extra_args: ""

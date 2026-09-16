@@ -1,0 +1,5 @@
+---
+podman_exporter_enabled: false
+
+containers_user: containers
+containers_home: /srv/containers
