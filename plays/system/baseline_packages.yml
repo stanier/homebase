@@ -1,0 +1,7 @@
+---
+- name: Install baseline packages
+  hosts: all
+  become: true
+
+  roles:
+    - { role: common, tags: []}

@@ -1,0 +1,97 @@
+---
+# Builds one missing template (tmpl_key/tmpl), included from
+# build_templates.yml. staged_image lives on the Proxmox node itself
+# (this file runs on the node's normal SSH connection, same as every
+# other role in this repo); every API task below is delegated to
+# localhost.
+- name: "{{ tmpl_key }}: ensure the image staging dir exists"
+  ansible.builtin.file:
+    path: "{{ proxmox_image_staging_dir }}"
+    state: directory
+    mode: "0755"
+  become: true
+
+- name: "{{ tmpl_key }}: download the cloud image to this node"
+  ansible.builtin.get_url:
+    url: "{{ tmpl.image_url }}"
+    dest: "{{ proxmox_image_staging_dir }}/{{ tmpl_key }}.qcow2"
+    mode: "0644"
+  become: true
+
+- delegate_to: localhost
+  become: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  module_defaults:
+    group/community.proxmox.proxmox:
+      api_host: "{{ ansible_host }}"
+      api_user: "{{ proxmox_api_user }}"
+      api_token_id: "{{ proxmox_api_token_id }}"
+      api_token_secret: "{{ proxmox_api_token_secret }}"
+      validate_certs: "{{ proxmox_api_validate_certs }}"
+      api_timeout: "{{ proxmox_api_timeout }}"
+  block:
+    - name: "{{ tmpl_key }}: create the template VM shell"
+      community.proxmox.proxmox_kvm:
+        node: "{{ inventory_hostname }}"
+        vmid: "{{ tmpl.vmid }}"
+        name: "{{ tmpl_key }}"
+        ostype: "{{ tmpl.ostype }}"
+        agent: true
+        cores: 2
+        memory: 2048
+        cpu: "{{ proxmox_vm_cpu }}"
+        net:
+          net0: "virtio,bridge={{ proxmox_mgmt_bridge }}"
+        scsihw: virtio-scsi-pci
+        serial:
+          serial0: socket
+        vga: serial0
+        state: present
+
+    - name: "{{ tmpl_key }}: import the downloaded image as the boot disk"
+      community.proxmox.proxmox_disk:
+        vmid: "{{ tmpl.vmid }}"
+        disk: scsi0
+        storage: "{{ proxmox_storage_pool }}"
+        # A raw absolute path here only works for a real interactive root
+        # session -- an API token (even root@pam's) hits "Only root can pass
+        # arbitrary filesystem paths", so this uses the storage-relative
+        # <STORAGE>:import/<FILE> form instead (PVE 9.x+), which resolves to
+        # the same place proxmox_image_staging_dir downloaded the image to.
+        import_from: "{{ proxmox_storage_pool }}:import/{{ tmpl_key }}.qcow2"
+        create: regular
+        state: present
+
+    - name: "{{ tmpl_key }}: attach the cloud-init drive and finalize boot config"
+      community.proxmox.proxmox_kvm:
+        node: "{{ inventory_hostname }}"
+        vmid: "{{ tmpl.vmid }}"
+        ide:
+          ide2: "{{ proxmox_storage_pool }}:cloudinit"
+        boot: "order=scsi0"
+        bootdisk: scsi0
+        state: present
+        # state: present on an already-existing vmid (the shell created two
+        # tasks up) is otherwise a silent no-op -- the module only applies
+        # new values when update is true, and update itself still blocks
+        # net/ide/sata/scsi/virtio changes (ide2 here) unless update_unsafe
+        # is also true. See the identical comment in legacy_create_vm.yml.
+        update: true
+        update_unsafe: true
+
+    - name: "{{ tmpl_key }}: convert to a template"
+      community.proxmox.proxmox_kvm:
+        node: "{{ inventory_hostname }}"
+        vmid: "{{ tmpl.vmid }}"
+        template: true
+        state: present
+        # Same as above -- vmid already exists by this point, so state:
+        # present needs update: true or this never actually converts it.
+        update: true
+
+- name: "{{ tmpl_key }}: remove the staged image file"
+  ansible.builtin.file:
+    path: "{{ proxmox_image_staging_dir }}/{{ tmpl_key }}.qcow2"
+    state: absent
+  become: true

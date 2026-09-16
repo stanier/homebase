@@ -1,0 +1,7 @@
+---
+- name: Build golden cloud-init templates
+  hosts: proxmox
+  become: true
+
+  roles:
+    - hypervisor

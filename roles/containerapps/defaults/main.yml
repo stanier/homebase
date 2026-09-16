@@ -1,0 +1,47 @@
+---
+# Where container definitions come from: "git" (clone/pull a repo) or
+# "local" (copy a checkout from the control node).
+containerapps_source: git
+
+# Used when containerapps_source == "git"
+containerapps_repo: ""
+containerapps_version: main
+
+# Used when containerapps_source == "local" — path on the control node, e.g.
+# ~/git/gitea/container-files
+containerapps_local_src: ""
+
+containerapps_dest: "{{ containers_home }}/container-files"
+
+# Which subdirectories of the repo to deploy as systemd Quadlet units
+# (<service>/<service>.container) on this host, e.g.:
+#   containerapps_quadlet_services:
+#     - gitea
+containerapps_quadlet_services: []
+
+# Same as containerapps_quadlet_services, but the unit files are synced
+# without being started -- for a converted service that isn't currently
+# wanted running. Its .container unit should omit [Install] too, so it
+# also doesn't auto-start at boot; start it manually when actually needed.
+containerapps_quadlet_services_disabled: []
+
+# Rootless podman's cgroup manager for the containers user. Leave as
+# "systemd" unless this host's sudo session isn't registered with
+# systemd-logind (no pam_systemd on the become path), which makes pod
+# creation fail with "cgroup is not set: internal libpod error" — set to
+# "cgroupfs" on those hosts instead.
+containerapps_cgroup_manager: systemd
+
+# Leave unset (the Linux default of 1024, i.e. only root can bind <1024)
+# unless a Network=host service on this host needs to bind a privileged
+# port as a rootless container -- e.g. caddy.container binding 80/443.
+# Rootless Podman containers run as "root" only inside their own user
+# namespace; under Network=host that's irrelevant, since the process ends
+# up sharing the *host's* real network namespace and is bound by the
+# host kernel's own unprivileged-port check instead, so it fails with no
+# clear error (Caddy's own log looks clean right up to the point it tries
+# to actually bind, then the whole process just exits 1). Set this to the
+# lowest port such a service needs, e.g. 80, rather than 0, to avoid
+# loosening the restriction for every unprivileged process on the host
+# any further than actually required.
+containerapps_unprivileged_port_start: ""

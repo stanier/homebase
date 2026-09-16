@@ -1,0 +1,10 @@
+---
+- name: Destroy a VM via the Proxmox API
+  hosts: all
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
+  roles:
+    - hypervisor

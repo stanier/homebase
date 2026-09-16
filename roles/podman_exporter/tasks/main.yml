@@ -1,0 +1,50 @@
+---
+- name: Ensure podman_exporter package is installed
+  ansible.builtin.package:
+    name: prometheus-podman-exporter
+    state: present
+  when: podman_exporter_enabled
+
+- name: Look up the containers user's uid
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ containers_user }}"
+
+- name: Compute containers user's XDG_RUNTIME_DIR once for this play
+  ansible.builtin.set_fact:
+    containers_xdg_runtime_dir: "/run/user/{{ getent_passwd[containers_user][1] }}"
+
+- name: Remove now-obsolete podman_exporter per-user override file
+  ansible.builtin.file:
+    path: "{{ containers_home }}/.config/prometheus-podman-exporter"
+    state: absent
+  notify: restart podman_exporter
+
+- name: Enable and start podman_exporter for the containers user
+  ansible.builtin.systemd:
+    name: prometheus-podman-exporter
+    scope: user
+    state: started
+    enabled: true
+  become_user: "{{ containers_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ containers_xdg_runtime_dir }}"
+  when: podman_exporter_enabled
+
+- name: Stop and disable podman_exporter for the containers user when opted out
+  ansible.builtin.systemd:
+    name: prometheus-podman-exporter
+    scope: user
+    state: stopped
+    enabled: false
+  become_user: "{{ containers_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ containers_xdg_runtime_dir }}"
+  when: not podman_exporter_enabled
+  failed_when: false
+
+- name: Remove podman_exporter package when opted out
+  ansible.builtin.package:
+    name: prometheus-podman-exporter
+    state: absent
+  when: not podman_exporter_enabled

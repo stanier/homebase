@@ -1,0 +1,74 @@
+---
+- name: Install security packages
+  ansible.builtin.include_tasks: security_packages.yml
+  tags:
+    - provision
+    - onboard
+
+- name: Install podman for detected package manager
+  ansible.builtin.include_tasks: install_podman.yml
+  tags:
+    - provision
+    - onboard
+
+- name: Disable linger for containers user before modifying account
+  ansible.builtin.command: "loginctl disable-linger {{ containers_user }}"
+  register: disable_linger
+  changed_when: disable_linger.rc == 0
+  failed_when: false
+
+- name: Terminate any running sessions/processes for containers user
+  ansible.builtin.command: "loginctl terminate-user {{ containers_user }}"
+  changed_when: false
+  failed_when: false
+
+- name: Wait for containers user's systemd instance to stop
+  ansible.builtin.command: "loginctl show-user {{ containers_user }} -p State --value"
+  register: containers_user_state
+  until: containers_user_state.stdout | trim not in ['active', 'lingering', 'opening']
+  retries: 10
+  delay: 1
+  changed_when: false
+  failed_when: false
+
+- name: Create dedicated user for running rootless podman
+  ansible.builtin.user:
+    name: "{{ containers_user }}"
+    system: false
+    create_home: true
+    home: "{{ containers_home }}"
+    move_home: true
+    shell: "{{ containers_user_shell }}"
+    password_lock: true
+    groups: "{{ containers_user_groups }}"
+    append: true
+    state: present
+  register: containers_user_account
+
+- name: Check for existing subuid/subgid range
+  ansible.builtin.shell: >
+    grep -q '^{{ containers_user }}:' /etc/subuid &&
+    grep -q '^{{ containers_user }}:' /etc/subgid
+  register: subid_check
+  changed_when: false
+  failed_when: false
+
+- name: Assign subuid/subgid range for rootless containers
+  ansible.builtin.command: >
+    usermod --add-subuids 100000-165535 --add-subgids 100000-165535 {{ containers_user }}
+  when: subid_check.rc != 0
+
+- name: Ensure containers user owns their entire home directory
+  ansible.builtin.file:
+    path: "{{ containers_home }}"
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+    state: directory
+    recurse: true
+    follow: false
+  when: containers_user_account.changed
+
+- name: Enable linger so user services run without an active login
+  ansible.builtin.command: "loginctl enable-linger {{ containers_user }}"
+  args:
+    creates: "/var/lib/systemd/linger/{{ containers_user }}"

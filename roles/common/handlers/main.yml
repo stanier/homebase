@@ -1,0 +1,10 @@
+---
+- name: update ca trust (redhat)
+  ansible.builtin.command: update-ca-trust
+  tags:
+    - ca_trust
+
+- name: update ca trust (debian)
+  ansible.builtin.command: update-ca-certificates
+  tags:
+    - ca_trust

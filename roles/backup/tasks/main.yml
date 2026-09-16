@@ -1,0 +1,103 @@
+---
+# Backs up every volume/bind-mount of every quadlet service containerapps
+# has actually deployed on this host (see templates/backup.sh.j2 for why
+# it reads that directory instead of taking its own service list), on a
+# daily systemd --user timer, into a per-host restic repo -- see
+# backup_repository's own comment in defaults/main.yml for why per-host.
+
+- name: Look up the containers user's uid
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ containers_user }}"
+
+- name: Compute containers user's XDG_RUNTIME_DIR
+  ansible.builtin.set_fact:
+    backup_xdg_runtime_dir: "/run/user/{{ getent_passwd[containers_user][1] }}"
+
+- name: Ensure backup and systemd user-unit directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+    mode: "0750"
+  loop:
+    - "{{ containers_home }}/backup"
+    - "{{ containers_home }}/.config/systemd/user"
+
+- name: Install restic
+  ansible.builtin.package:
+    name: restic
+    state: present
+
+- name: Write restic repository credentials
+  ansible.builtin.template:
+    src: backup.env.j2
+    dest: "{{ containers_home }}/backup/backup.env"
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+    mode: "0600"
+  no_log: true
+
+- name: Install backup.sh
+  ansible.builtin.template:
+    src: backup.sh.j2
+    dest: "{{ containers_home }}/backup/backup.sh"
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+    mode: "0750"
+
+- name: Install backup systemd user service and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ containers_home }}/.config/systemd/user/{{ item }}"
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+    mode: "0644"
+  loop:
+    - backup.service
+    - backup.timer
+
+- name: Check whether the restic repository is already initialized
+  ansible.builtin.command: restic snapshots --latest 1
+  environment:
+    RESTIC_REPOSITORY: "{{ backup_repository }}"
+    RESTIC_PASSWORD: "{{ backup_password }}"
+    AWS_ACCESS_KEY_ID: "{{ backup_aws_access_key_id }}"
+    AWS_SECRET_ACCESS_KEY: "{{ backup_aws_secret_access_key }}"
+    XDG_RUNTIME_DIR: "{{ backup_xdg_runtime_dir }}"
+  become_user: "{{ containers_user }}"
+  register: backup_repo_check
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Initialize restic repository
+  ansible.builtin.command: restic init
+  environment:
+    RESTIC_REPOSITORY: "{{ backup_repository }}"
+    RESTIC_PASSWORD: "{{ backup_password }}"
+    AWS_ACCESS_KEY_ID: "{{ backup_aws_access_key_id }}"
+    AWS_SECRET_ACCESS_KEY: "{{ backup_aws_secret_access_key }}"
+    XDG_RUNTIME_DIR: "{{ backup_xdg_runtime_dir }}"
+  become_user: "{{ containers_user }}"
+  when: backup_repo_check.rc != 0
+  no_log: true
+
+- name: Reload systemd user daemon
+  ansible.builtin.systemd:
+    daemon_reload: true
+    scope: user
+  become_user: "{{ containers_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ backup_xdg_runtime_dir }}"
+
+- name: Enable and start the backup timer
+  ansible.builtin.systemd:
+    name: backup.timer
+    scope: user
+    state: started
+    enabled: true
+  become_user: "{{ containers_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ backup_xdg_runtime_dir }}"

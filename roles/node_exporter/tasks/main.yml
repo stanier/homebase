@@ -1,0 +1,38 @@
+---
+# Assumes EPEL is already enabled on RedHat-family hosts
+# (plays/system/baseline_packages.yml -> role common -> enable_epel.yml, which
+# every host already runs) -- this role doesn't declare that as a meta
+# dependency since every other role here assumes the same baseline
+# rather than re-running it itself. Debian-family hosts need nothing
+# extra; their own repos carry it natively.
+#
+# Same package upstream (Debian Go Packaging Team's build is what EPEL
+# rebuilds from), same systemd unit name and /etc/default env file on
+# both -- only the package name itself differs by distro family.
+
+- name: Ensure node_exporter package matches enabled state
+  # Both packages' postrm/%preun scriptlets stop and disable the
+  # service on removal, so there's nothing else to tear down here when
+  # disabled.
+  ansible.builtin.package:
+    name: "{{ 'node-exporter' if ansible_facts['os_family'] == 'RedHat' else 'prometheus-node-exporter' }}"
+    state: "{{ 'present' if node_exporter_enabled else 'absent' }}"
+
+- name: Configure node_exporter command-line arguments
+  ansible.builtin.copy:
+    dest: /etc/default/prometheus-node-exporter
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ansible-playbooks (roles/node_exporter).
+      ARGS='{{ node_exporter_extra_args }}'
+  when: node_exporter_enabled
+  notify: restart node_exporter
+
+- name: Ensure node_exporter is enabled and running
+  ansible.builtin.systemd:
+    name: prometheus-node-exporter
+    state: started
+    enabled: true
+  when: node_exporter_enabled
