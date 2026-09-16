@@ -5,16 +5,14 @@
 mail_server_domain: "{{ base_domain }}"
 
 # Subnets allowed to relay through this host's Postfix unauthenticated
-# (mynetworks) -- every roles/postfix satellite lives in one of these,
-# see inventory/dangerzone/host_vars/metrics1.yml for the same CIDRs
-# used as firewall "from" scopes elsewhere. 192.168.100.0/24 is the
-# Proxmox hosts' own app subnet (turkey/homelab) -- reaching mail1 from
-# there depends on inter-VLAN routing being allowed between it and
-# 192.168.104.0/24, which hasn't been verified.
+# (mynetworks), beyond loopback -- every roles/postfix satellite lives
+# in one of these, see inventory/dangerzone/host_vars/mail1.yml (same
+# CIDRs also used there as firewall "from" scopes) for the real subnets:
+# the Proxmox hosts' own app subnet (turkey/homelab) and the VM app
+# subnet. Left empty here rather than baking this environment's real
+# subnets into the role -- set the real value in host_vars/mail1.yml.
 mail_server_relay_networks:
   - 127.0.0.0/8
-  - 192.168.100.0/24
-  - 192.168.104.0/24
 
 # Virtual mailboxes to provision, e.g.:
 #   mail_server_virtual_mailboxes:

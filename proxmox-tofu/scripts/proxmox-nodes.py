@@ -12,10 +12,19 @@ same ones providers.tf's provider blocks use. That keeps every actual
 Proxmox node name out of the .tf files entirely: providers.tf just picks
 data.external.proxmox_nodes.result["node1"], never the node's real name.
 
+Also reads [proxmox:vars]'s ansible_user (required) and
+ansible_ssh_private_key_file (optional, defaults to the same
+~/.ssh/id_ed25519 onboarding itself uses) -- the operator account
+providers.tf's ssh block connects to each node as. Keeps the operator's
+real username out of providers.tf the same way the node names are kept
+out: it comes back as each node's own ssh_user/ssh_private_key_file
+instead of a literal in the .tf file.
+
 stdin: the `external` data source's query object (ignored, no inputs
-needed here). stdout: {"json": "<alias -> {name, host} as a JSON
-string>"} -- same nested-string convention as vm-hostvars.py, for the
-same reason (`external` only allows string values in its result).
+needed here). stdout: {"json": "<alias -> {name, host, ssh_user,
+ssh_private_key_file} as a JSON string>"} -- same nested-string
+convention as vm-hostvars.py, for the same reason (`external` only
+allows string values in its result).
 """
 import json
 import os
@@ -47,6 +56,23 @@ def parse_hosts_ini_group(hosts_ini: Path, group: str) -> dict:
     return hosts
 
 
+def parse_hosts_ini_group_vars(hosts_ini: Path, group: str) -> dict:
+    in_section = False
+    group_vars = {}
+    for line in hosts_ini.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("["):
+            in_section = line == f"[{group}:vars]"
+            continue
+        if not in_section:
+            continue
+        key, value = line.split("=", 1)
+        group_vars[key.strip()] = value.strip().strip("'\"")
+    return group_vars
+
+
 def main():
     sys.stdin.read()  # discard the query object on stdin
 
@@ -67,9 +93,28 @@ def main():
         sys.exit(1)
 
     nodes = parse_hosts_ini_group(hosts_ini, "proxmox")
+    group_vars = parse_hosts_ini_group_vars(hosts_ini, "proxmox")
+
+    if "ansible_user" not in group_vars:
+        print(
+            f"[proxmox:vars] in {hosts_ini} has no ansible_user -- "
+            "providers.tf's ssh block needs one to know who to connect as.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    ssh_user = group_vars["ansible_user"]
+    ssh_private_key_file = group_vars.get(
+        "ansible_ssh_private_key_file", "~/.ssh/id_ed25519"
+    )
 
     result = {
-        f"node{i + 1}": {"name": name, "host": inline["ansible_host"]}
+        f"node{i + 1}": {
+            "name": name,
+            "host": inline["ansible_host"],
+            "ssh_user": ssh_user,
+            "ssh_private_key_file": ssh_private_key_file,
+        }
         for i, (name, inline) in enumerate(nodes.items())
     }
 

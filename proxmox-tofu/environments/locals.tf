@@ -8,12 +8,18 @@ locals {
   snippet_storage = "local"
   network_prefix  = 24
 
-  app_bridge  = "vmbr2"
-  app_gateway = "192.168.104.1"
-  mgmt_bridge = "vmbr42"
+  # Real bridge names/gateway/MAC prefix for turkey/homelab -- pulled
+  # from inventory (group_vars/proxmox/main.yml, group_vars/vm.yml) via
+  # scripts/network-config.py rather than duplicated as literals here,
+  # same reasoning as local.nodes/local.vms below.
+  network_config = jsondecode(data.external.network_config.result.json)
 
-  management_mac_prefix = "02:42:FF"
-  management_interface  = "eth1"
+  app_bridge  = local.network_config.app_bridge
+  app_gateway = local.network_config.app_gateway
+  mgmt_bridge = local.network_config.mgmt_bridge
+
+  management_mac_prefix = local.network_config.management_mac_prefix
+  management_interface  = local.network_config.management_interface
 
   ciuser         = "automation"
   ssh_public_key = trimspace(file(pathexpand("~/.ssh/automation_ed25519.pub")))

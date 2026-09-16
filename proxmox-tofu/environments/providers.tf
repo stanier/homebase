@@ -5,8 +5,8 @@ provider "proxmox" {
   insecure  = true # self-signed cert, same as proxmox_api_validate_certs: false
 
   ssh {
-    username    = "keyton"
-    private_key = file(pathexpand("~/.ssh/id_ed25519"))
+    username    = local.nodes.node1.ssh_user
+    private_key = file(pathexpand(local.nodes.node1.ssh_private_key_file))
 
     node {
       name    = local.nodes.node1.name
@@ -22,8 +22,8 @@ provider "proxmox" {
   insecure  = true
 
   ssh {
-    username    = "keyton"
-    private_key = file(pathexpand("~/.ssh/id_ed25519"))
+    username    = local.nodes.node2.ssh_user
+    private_key = file(pathexpand(local.nodes.node2.ssh_private_key_file))
 
     node {
       name    = local.nodes.node2.name

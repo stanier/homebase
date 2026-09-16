@@ -121,13 +121,17 @@ management_mac_prefix: ""
 # override only if snippets need to live somewhere else in this cluster.
 proxmox_snippet_storage: local
 
-# cloud-init's initial user -- must be "keyton", not the fleet-wide
-# ansible_user (== "automation", see group_vars/all/vars.yml): the
-# automation account doesn't exist until plays/system/onboarding.yml creates it
+# cloud-init's initial user -- must be the operator's own personal
+# account, not the fleet-wide ansible_user (== "automation", see
+# group_vars/all/vars.yml): the automation account doesn't exist until
+# plays/system/onboarding.yml creates it
 # (roles/common/tasks/provision_automation_user.yml), so onboarding
-# itself has to reach the host as keyton first, same as
-# ./onboard --ask-become-pass does today.
-proxmox_vm_ciuser: keyton
+# itself has to reach the host as the operator first, same as
+# ./onboard --ask-become-pass does today. Left unset on purpose, like
+# proxmox_mgmt_bridge/proxmox_app_bridge above -- set the real value in
+# group_vars/proxmox/main.yml (same account as that group's
+# ansible_user, in practice).
+proxmox_vm_ciuser: ""
 
 # Matches the private key onboard already uses
 # (-e ansible_ssh_private_key_file=~/.ssh/id_ed25519).
@@ -135,14 +139,18 @@ proxmox_vm_ssh_public_key: "{{ lookup('file', '~/.ssh/id_ed25519.pub') }}"
 
 # roles/hypervisor/tasks/snippet_permissions.yml -- who the proxmox-tofu
 # OpenTofu module (a separate repo, not this one) SSHes into
-# turkey/homelab as when it uploads the mgmt-NIC-rename snippet
-# (providers.tf's ssh.username there). Deliberately *not* the fleet-wide
-# ansible_user (== "automation", group_vars/all/vars.yml) -- Tofu's SSH
-# file transfer has no become/sudo equivalent, unlike legacy_create_vm.yml's own
-# snippet-upload task, so whoever it connects as needs direct write
-# access to proxmox_snippet_dir; passwordless sudo (which "automation"
-# already has) doesn't help it the way it helps Ansible.
-proxmox_snippet_write_user: keyton
+# turkey/homelab as when it uploads the mgmt-NIC-rename snippet --
+# proxmox-tofu/scripts/proxmox-nodes.py reads this same account off
+# [proxmox:vars]' ansible_user in inventory, so providers.tf's
+# ssh.username never hardcodes it either. Deliberately *not* the
+# fleet-wide ansible_user (== "automation", group_vars/all/vars.yml) --
+# Tofu's SSH file transfer has no become/sudo equivalent, unlike
+# legacy_create_vm.yml's own snippet-upload task, so whoever it connects
+# as needs direct write access to proxmox_snippet_dir; passwordless
+# sudo (which "automation" already has) doesn't help it the way it
+# helps Ansible. Left unset on purpose, like proxmox_vm_ciuser above --
+# set the real value in group_vars/proxmox/main.yml.
+proxmox_snippet_write_user: ""
 
 # Directory-owning group this task grants proxmox_snippet_write_user
 # membership in, then group-owns proxmox_snippet_dir with (setgid, so

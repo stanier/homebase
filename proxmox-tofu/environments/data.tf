@@ -5,3 +5,7 @@ data "external" "vm_hostvars" {
 data "external" "proxmox_nodes" {
   program = ["${path.module}/../scripts/proxmox-nodes.py"]
 }
+
+data "external" "network_config" {
+  program = ["${path.module}/../scripts/network-config.py"]
+}

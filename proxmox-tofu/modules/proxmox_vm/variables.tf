@@ -144,8 +144,8 @@ variable "nameservers" {
 }
 
 variable "ciuser" {
-  type    = string
-  default = "keyton"
+  description = "Cloud-init user provisioned on the VM -- always passed explicitly by environments/locals.tf (local.ciuser), so no default here doubles as a stale placeholder."
+  type        = string
 }
 
 variable "ssh_public_key" {
