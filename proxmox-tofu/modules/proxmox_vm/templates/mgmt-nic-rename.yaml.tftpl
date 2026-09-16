@@ -1,0 +1,11 @@
+#cloud-config
+write_files:
+  - path: /etc/systemd/network/10-${management_interface}.link
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Match]
+      MACAddress=${management_mac}
+
+      [Link]
+      Name=${management_interface}
