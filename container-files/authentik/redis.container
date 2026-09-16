@@ -4,7 +4,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Container]
-Image=docker.io/library/redis:alpine
+Image=docker.io/library/redis:8-alpine
 Network=authentik.network
 NetworkAlias=redis
 Volume=authentik_authentik_redis:/data

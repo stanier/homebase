@@ -10,7 +10,7 @@ RUN chown named:named /etc/bind/named.conf
 
 VOLUME /etc/bind/zones
 
-EXPOSE 5353/udp 5353/tcp
+EXPOSE 15353/udp 15353/tcp
 
 USER named
 

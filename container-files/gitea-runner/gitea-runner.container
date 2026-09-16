@@ -6,7 +6,6 @@ Wants=network-online.target
 [Container]
 # https://hub.docker.com/r/gitea/act_runner/tags.
 Image=docker.io/gitea/act_runner:0.6.1
-SecurityLabelDisable=true
 Environment=GITEA_RUNNER_NAME=homelab-runner
 Environment=CONFIG_FILE=/data/config.yaml
 Environment=DOCKER_HOST=unix:///var/run/docker.sock
@@ -14,7 +13,18 @@ EnvironmentFile=/srv/containers/container-files/gitea-runner/.env
 Volume=/srv/containers/container-files/gitea-runner/data:/data
 Volume=/srv/containers/container-files/gitea-runner/data/root-ca.crt:/etc/ssl/certs/homelab-root-ca.crt:ro,z
 Volume=/srv/containers/container-files/gitea-runner/data/gitconfig:/etc/gitconfig:ro,z
-Volume=%t/podman/podman.sock:/var/run/docker.sock
+# The runner needs this socket to spawn job containers (act_runner's
+# docker executor) -- that's unavoidable for what this service does.
+# What isn't necessary is disabling SELinux confinement for the whole
+# container (the previous SecurityLabelDisable=true): relabeling just
+# this bind mount with :z gives the runner the access it needs to the
+# socket while everything else in the container stays confined. This
+# is still a rootless (per-user) socket, not root's -- a compromised
+# job can control this service account's containers/volumes, not the
+# whole host -- but that's still a meaningful blast radius, so only
+# trusted workflows/contributors should be able to trigger Actions
+# runs against this runner.
+Volume=%t/podman/podman.sock:/var/run/docker.sock:z
 PodmanArgs=--memory=2g
 PidsLimit=2048
 

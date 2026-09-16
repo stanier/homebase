@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Container]
 Image=docker.io/grafana/grafana-oss:11.2.0
-Network=host
+PublishPort=3000:3000
 EnvironmentFile=/srv/containers/container-files/grafana/.env
 Volume=grafana_grafana_data:/var/lib/grafana:U
 Volume=/srv/containers/container-files/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro,z

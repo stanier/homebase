@@ -1,0 +1,33 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /positions/positions.yaml
+
+# Network=host, and loki.container PublishPorts 3100 on the host --
+# reachable at localhost from here.
+clients:
+  - url: http://localhost:3100/loki/api/v1/push
+
+scrape_configs:
+  # syslog.container's rsyslog writes each sender's messages to
+  # /var/log/remote/<hostname>/<programname>.log (see
+  # syslog/data/rsyslog.conf's RemoteLogs template), bind-mounted here
+  # read-only at the same path. The static target below discovers every
+  # such file; the pipeline stages pull hostname/program back out of the
+  # path into labels instead of leaving them buried in `filename`.
+  - job_name: syslog
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: syslog
+          __path__: /var/log/remote/*/*.log
+    pipeline_stages:
+      - regex:
+          source: filename
+          expression: '^/var/log/remote/(?P<hostname>[^/]+)/(?P<program>[^/]+)\.log$'
+      - labels:
+          hostname:
+          program:
