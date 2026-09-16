@@ -1,0 +1,4 @@
+FROM docker.gitea.com/runner-images:ubuntu-latest
+
+COPY data/root-ca.crt /usr/local/share/ca-certificates/homelab-root-ca.crt
+RUN update-ca-certificates

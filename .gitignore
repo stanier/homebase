@@ -1,0 +1,5 @@
+*.env
+.env
+dns/data/keys/
+grafana/provisioning/datasources/
+adguardhome/data/conf/

@@ -1,0 +1,16 @@
+[Unit]
+Description=AdGuard Home
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/adguard/adguardhome:v0.107.79
+Network=host
+Volume=/srv/containers/container-files/adguardhome/data/conf:/opt/adguardhome/conf:Z
+Volume=adguardhome_work:/opt/adguardhome/work
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
