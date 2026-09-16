@@ -20,7 +20,11 @@ locals {
 
   default_disk_size = "10G"
 
-  stop_on_destroy = true
+  # Hard power-off on destroy is fine for testzone's routinely
+  # destroyed/recreated VMs (see testrun.sh), but dangerzone VMs hold
+  # state worth flushing -- see modules/proxmox_vm's stop_on_destroy
+  # docs -- so they get a graceful ACPI shutdown instead.
+  stop_on_destroy = terraform.workspace == "testzone"
 
   # Golden template vmids -- inventory/<env>/group_vars/proxmox/templates.yml.
   templates = {
@@ -32,11 +36,26 @@ locals {
 
   nodes = jsondecode(data.external.proxmox_nodes.result.json)
 
+  # 3 octets (6 hex digits) only cover vmid values up to 16,777,215, but
+  # modules/proxmox_vm's vmid validation allows up to 999,999,999. Taking
+  # the low 6 hex digits (vmid % 0x1000000) instead of the raw, wider hex
+  # string's leading 6 digits means two vmids only collide if they're
+  # exactly a multiple of 16,777,216 apart -- vs. the previous
+  # format("%06x", vmid) substr, which silently dropped the trailing
+  # digits and collided for every vmid sharing the same leading 6 (i.e.
+  # any two vmids within the same 16M-wide block).
   management_mac = { for name, vm in local.vms :
-    name => "${local.management_mac_prefix}:${substr(format("%06x", vm.vmid), 0, 2)}:${substr(format("%06x", vm.vmid), 2, 2)}:${substr(format("%06x", vm.vmid), 4, 2)}"
+    name => "${local.management_mac_prefix}:${substr(format("%06x", vm.vmid % 16777216), 0, 2)}:${substr(format("%06x", vm.vmid % 16777216), 2, 2)}:${substr(format("%06x", vm.vmid % 16777216), 4, 2)}"
   }
 
   enabled_vms = { for name, vm in local.vms : name => vm if try(vm.enabled, true) }
+
+  # vms.tf only ever defines vm_node1/vm_node2 -- a host whose node_alias
+  # (from scripts/vm-hostvars.py, derived from hosts.ini's [proxmox] group
+  # order) doesn't match either would silently match neither module's
+  # for_each and end up unmanaged with no error. vms.tf's
+  # check_known_node_aliases precondition fails the plan instead.
+  unmodeled_vms = [for name, vm in local.enabled_vms : name if !contains(["node1", "node2"], vm.node_alias)]
 
   vm_config = { for name, vm in local.enabled_vms : name => merge(vm, {
     template_vmid  = local.templates[vm.template]

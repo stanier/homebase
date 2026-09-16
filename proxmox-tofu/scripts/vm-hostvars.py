@@ -133,7 +133,7 @@ def main():
                 "proxmox_enabled", group_vars.get("proxmox_enabled", True)
             ),
             "protected": host_vars.get(
-                "proxmox_protected", group_vars.get("proxmox_protected", False)
+                "proxmox_protected", group_vars.get("proxmox_protected", True)
             ),
             "vmid": int(inline["proxmox_vmid"]),
             "app_ip": inline["app_ip"],

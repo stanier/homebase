@@ -1,3 +1,14 @@
+# Fails the plan instead of silently leaving a VM unmanaged when its
+# node_alias doesn't match any module below -- see local.unmodeled_vms.
+resource "terraform_data" "check_known_node_aliases" {
+  lifecycle {
+    precondition {
+      condition     = length(local.unmodeled_vms) == 0
+      error_message = "These enabled VMs have a node_alias outside {node1, node2}, so vm_node1/vm_node2's for_each below wouldn't manage them at all: ${join(", ", local.unmodeled_vms)}. Check hosts.ini's [proxmox] group for a typo, or add a vm_node3 module here if a third node was actually added."
+    }
+  }
+}
+
 module "vm_node1" {
   source = "../modules/proxmox_vm"
 

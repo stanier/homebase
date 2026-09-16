@@ -68,7 +68,15 @@ trap 'unset VAULT_PASS' EXIT
 DECRYPTED="$("$ANSIBLE_VAULT_BIN" view --vault-password-file="$VAULT_PASS_SCRIPT" "$VAULT_FILE")"
 
 extract_secret() {
-  grep -E "^${1}:" <<<"$DECRYPTED" | sed -E "s/^${1}:[[:space:]]*[\"']?([^\"']*)[\"']?[[:space:]]*$/\1/"
+  # A sed capture like [^"']* would silently truncate any secret that
+  # happens to contain a quote character -- parse the YAML properly
+  # instead so that can't happen.
+  python3 -c '
+import sys, yaml
+value = yaml.safe_load(sys.stdin).get(sys.argv[1])
+if value is not None:
+    print(value)
+' "$1" <<<"$DECRYPTED"
 }
 
 for i in "${!PROXMOX_NODES[@]}"; do
