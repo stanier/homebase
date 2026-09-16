@@ -1,0 +1,17 @@
+[Unit]
+Description=code-server
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/codercom/code-server:4.122.0
+EnvironmentFile=/srv/containers/container-files/code-server/.env
+PublishPort=8081:8080
+Volume=code-server_code_server_config:/home/coder/.config
+Volume=code-server_code_server_workspace:/home/coder/project
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,24 @@
+[Unit]
+Description=Authentik worker
+After=network-online.target postgresql.service redis.service
+Wants=network-online.target postgresql.service redis.service
+
+[Container]
+Image=ghcr.io/goauthentik/server@sha256:21000cebe8e51eca0620034096586d675cedec8925ac750f7f8966d86eeb0da0
+Exec=worker
+Network=authentik.network
+Environment=AUTHENTIK_REDIS__HOST=redis
+Environment=AUTHENTIK_POSTGRESQL__HOST=postgresql
+Environment=AUTHENTIK_POSTGRESQL__USER=authentik
+Environment=AUTHENTIK_POSTGRESQL__NAME=authentik
+EnvironmentFile=/srv/containers/container-files/authentik/.env
+Volume=authentik_authentik_media:/media
+Volume=authentik_authentik_templates:/templates
+PodmanArgs=--memory=2g
+PidsLimit=1024
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

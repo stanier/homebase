@@ -1,0 +1,19 @@
+[Unit]
+Description=Authentik PostgreSQL
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/library/postgres:16-alpine
+Network=authentik.network
+NetworkAlias=postgresql
+Environment=POSTGRES_USER=authentik
+Environment=POSTGRES_DB=authentik
+EnvironmentFile=/srv/containers/container-files/authentik/.env
+Volume=authentik_authentik_postgresql:/var/lib/postgresql/data
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

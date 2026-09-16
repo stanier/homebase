@@ -1,0 +1,22 @@
+[Unit]
+Description=Loki
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/grafana/loki:3.2.1
+PublishPort=3100:3100
+Volume=/srv/containers/container-files/loki/data/loki-config.yaml:/etc/loki/local-config.yaml:ro,z
+Volume=loki_loki_data:/loki
+Exec=-config.file=/etc/loki/local-config.yaml
+HealthCmd=wget -q --spider http://127.0.0.1:3100/ready
+HealthInterval=30s
+HealthTimeout=5s
+HealthStartPeriod=60s
+HealthRetries=3
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
