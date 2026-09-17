@@ -1,0 +1,33 @@
+name: Deploy Zensical site
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install Zensical
+        run: pip install zensical
+
+      - name: Build site
+        run: zensical build --clean
+
+      - name: Ship it to app-host
+        uses: https://gitea.dangerzone.internal/keyton/ci-actions/deploy-to-apphost@main
+        with:
+          app: ${{ gitea.event.repository.name }}
+          container_port: 80
+          deploy_host: ${{ vars.DEPLOY_HOST }}
+          ssh_key: ${{ secrets.SSH_PRIVATE_KEY }}
+
