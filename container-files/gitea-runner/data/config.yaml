@@ -3,6 +3,15 @@ log:
 
 container:
   docker_host: "-"
+  # Job containers act_runner spawns for each workflow run are separate
+  # `docker create` calls made via the podman socket, not covered by
+  # gitea-runner.container's own DNS= -- they hit the exact same
+  # rootless-Podman-can't-use-the-host's-systemd-resolved-stub issue
+  # (see that file's comment), so a checkout/clone against
+  # gitea.dangerzone.internal fails the same way the runner's own
+  # registration ping did before that fix. options passes arbitrary
+  # extra flags to the job container's `docker create`.
+  options: --dns=192.168.104.24
 
 runner:
   labels:
