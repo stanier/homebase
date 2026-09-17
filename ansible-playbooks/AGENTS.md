@@ -42,6 +42,11 @@ that deal with VM lifecycle or secrets.
 - Read `docs/VAULT.md` before adding, moving, or consuming a secret.
 - Check `docs/PACKAGE_MANAGEMENT.md` before touching the update plays'
   package-manager handling.
+- Read `docs/GITEA_ACTIONS.md` before touching `roles/containerapps`'
+  gitea-runner service, `roles/appdeploy`/`roles/appdeploy_caddy`, or
+  debugging a Gitea Actions workflow failure -- covers rootless-Podman
+  DNS, the gitea-runner SELinux fix, appdeploy key/token setup, and
+  referencing private action repos from a workflow.
 - There's no CI/test harness here beyond running the plays themselves —
   validate with `--check`/`-i inventory/testzone` against testzone
   before touching `dangerzone`, and don't run destructive plays

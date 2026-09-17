@@ -78,6 +78,9 @@ Start here before digging into role source:
   account.
 - [`docs/PACKAGE_MANAGEMENT.md`](docs/PACKAGE_MANAGEMENT.md) — package
   manager coverage status for the update plays.
+- [`docs/GITEA_ACTIONS.md`](docs/GITEA_ACTIONS.md) — gitea-runner
+  (DNS/SELinux gotchas), appdeploy CI setup and debugging, and
+  referencing private action repos from a workflow.
 
 See also [`../proxmox-tofu/README.md`](../proxmox-tofu/README.md) for VM
 lifecycle (the supported default for both environments) and
