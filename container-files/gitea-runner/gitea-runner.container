@@ -27,6 +27,16 @@ Volume=/srv/containers/container-files/gitea-runner/data/gitconfig:/etc/gitconfi
 Volume=%t/podman/podman.sock:/var/run/docker.sock:z
 PodmanArgs=--memory=2g
 PidsLimit=2048
+# Rootless Podman can't hand a container the host's own resolv.conf
+# nameserver when it's a systemd-resolved stub (127.0.0.53) -- a
+# container can't reach the host's loopback, so Podman silently swaps
+# in a public fallback (1.1.1.1) instead. That's fine for every other
+# service here since they all address each other by raw app_ip (see
+# Caddy's Caddyfile), but this is the one container that needs to
+# resolve an actual internal hostname (GITEA_INSTANCE_URL, gitea's ACME
+# cert is issued for gitea.dangerzone.internal), so point it at
+# container-sandbox's AdGuardHome/bind DNS directly.
+DNS=192.168.104.24
 
 [Service]
 Restart=always
