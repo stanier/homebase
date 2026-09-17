@@ -1,173 +1,75 @@
 ---
-icon: lucide/rocket
+icon: lucide/house
 ---
 
-# Get started
+# homebase
 
-For full documentation visit [zensical.org](https://zensical.org/docs/).
+`homebase` is the parent of a small family of repos that together run a
+self-hosted homelab: Proxmox hosts, VM lifecycle, fleet configuration,
+containerized services, and the Gitea CI/CD that ties it all together.
+This site is the map — architecture, environments, and how the pieces
+hand off to each other. Each repo below carries its own docs site for
+the detail that's actually specific to it.
 
-## Commands
+## The repos
 
-* [`zensical new`][new] - Create a new project
-* [`zensical serve`][serve] - Start local web server
-* [`zensical build`][build] - Build your site
+| Repo | Owns | Docs |
+|---|---|---|
+| [`proxmox-tofu`](https://gitea.dangerzone.internal/keyton/proxmox-tofu) | VM lifecycle — cloning a VM from a golden template, sizing it, networking, cloud-init | [docs](https://docs.apps.testzone.internal/proxmox-tofu/) |
+| [`ansible-playbooks`](https://gitea.dangerzone.internal/keyton/ansible-playbooks) | Everything else about a host: onboarding, baseline config, updates, secrets, the Ansible side of deploying containers | [docs](https://docs.apps.testzone.internal/ansible-playbooks/) |
+| [`container-files`](https://gitea.dangerzone.internal/keyton/container-files) | Podman Quadlet unit definitions for every containerized service — no deploy logic of its own | [docs](https://docs.apps.testzone.internal/container-files/) |
 
-  [new]: https://zensical.org/docs/usage/new/
-  [serve]: https://zensical.org/docs/usage/preview/
-  [build]: https://zensical.org/docs/usage/build/
+`homebase` itself holds nothing operational — no inventory, no state,
+no service config. It's the docs hub for the family — see
+[Layout of this repo](#layout-of-this-repo) below for what actually
+lives here.
 
-## Examples
+## The pipeline
 
-### Admonitions
-
-> Go to [documentation](https://zensical.org/docs/authoring/admonitions/)
-
-!!! note
-
-    This is a **note** admonition. Use it to provide helpful information.
-
-!!! warning
-
-    This is a **warning** admonition. Be careful!
-
-### Details
-
-> Go to [documentation](https://zensical.org/docs/authoring/admonitions/#collapsible-blocks)
-
-??? info "Click to expand for more info"
-
-    This content is hidden until you click to expand it.
-    Great for FAQs or long explanations.
-
-## Code Blocks
-
-> Go to [documentation](https://zensical.org/docs/authoring/code-blocks/)
-
-``` python hl_lines="2" title="Code blocks"
-def greet(name):
-    print(f"Hello, {name}!") # (1)!
-
-greet("Python")
-```
-
-1.  > Go to [documentation](https://zensical.org/docs/authoring/code-blocks/#code-annotations)
-
-    Code annotations allow to attach notes to lines of code.
-
-Code can also be highlighted inline: `#!python print("Hello, Python!")`.
-
-## Content tabs
-
-> Go to [documentation](https://zensical.org/docs/authoring/content-tabs/)
-
-=== "Python"
-
-    ``` python
-    print("Hello from Python!")
-    ```
-
-=== "Rust"
-
-    ``` rs
-    println!("Hello from Rust!");
-    ```
-
-## Diagrams
-
-> Go to [documentation](https://zensical.org/docs/authoring/diagrams/)
-
-``` mermaid
+```mermaid
 graph LR
-  A[Start] --> B{Error?};
-  B -->|Yes| C[Hmm...];
-  C --> D[Debug];
-  D --> B;
-  B ---->|No| E[Yay!];
+  A["proxmox-tofu<br/>clone + boot a VM"] --> B["ansible-playbooks<br/>onboard, baseline, deploy"]
+  B --> C["container-files<br/>synced onto [containers] hosts,<br/>run as Quadlet units"]
+  B -.->|CI trigger| D["Gitea Actions<br/>ci-actions repo"]
+  D -.->|deploy-to-apphost| E["docs sites + apps<br/>served behind Caddy"]
 ```
 
-## Footnotes
+1. **`proxmox-tofu`** clones a VM from a golden template and boots it —
+   the supported default for both environments now (a legacy
+   Ansible-native path still exists as a fallback).
+2. **`ansible-playbooks`** takes it from there: management network,
+   baseline packages/accounts, logging, and — for hosts in the
+   `[containers]` group — syncing and running `container-files` as
+   systemd Quadlet units via `roles/containerapps`.
+3. **`container-files`** has no deploy logic of its own; it's the
+   superset of service definitions every `[containers]` host draws its
+   subset from.
+4. Every app repo (including each docs site) ships itself via **Gitea
+   Actions**, using the shared `ci-actions` repo's `deploy-to-apphost`
+   action — see [ci-cd.md](ci-cd.md).
 
-> Go to [documentation](https://zensical.org/docs/authoring/footnotes/)
+## Environments
 
-Here's a sentence with a footnote.[^1]
+Two environments exist end to end — Proxmox pool, Ansible inventory,
+and Tofu workspace all use the same two names:
 
-Hover it, to see a tooltip.
+- **`testzone`** — dev/staging
+- **`dangerzone`** — prod
 
-[^1]: This is the footnote.
+There's no default; every play/apply is explicit about which one it
+targets. See `ansible-playbooks/docs/VAULT.md` and `proxmox-tofu`'s
+README for exactly how each tool selects an environment.
 
+## Layout of this repo
 
-## Formatting
+```
+docs/            this site's Markdown source
+zensical.toml    site config (nav, theme)
+Containerfile    builds docs/ into a Caddy image (zensical build -> site/)
+.gitea/workflows/deploy.yml   builds + ships this site on push to main
+```
 
-> Go to [documentation](https://zensical.org/docs/authoring/formatting/)
-
-- ==This was marked (highlight)==
-- ^^This was inserted (underline)^^
-- ~~This was deleted (strikethrough)~~
-- H~2~O
-- A^T^A
-- ++ctrl+alt+del++
-
-## Icons, Emojis
-
-> Go to [documentation](https://zensical.org/docs/authoring/icons-emojis/)
-
-* :sparkles: `:sparkles:`
-* :rocket: `:rocket:`
-* :tada: `:tada:`
-* :memo: `:memo:`
-* :eyes: `:eyes:`
-
-## Maths
-
-> Go to [documentation](https://zensical.org/docs/authoring/math/)
-
-$$
-\cos x=\sum_{k=0}^{\infty}\frac{(-1)^k}{(2k)!}x^{2k}
-$$
-
-!!! warning "Needs configuration"
-    Note that MathJax is included via a `script` tag on this page and is not
-    configured in the generated default configuration to avoid including it
-    in a pages that do not need it. See the documentation for details on how
-    to configure it on all your pages if they are more Maths-heavy than these
-    simple starter pages.
-
-<script id="MathJax-script" src="https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js"></script>
-<script>
-  window.MathJax = {
-    tex: {
-      inlineMath: [["\\(", "\\)"]],
-      displayMath: [["\\[", "\\]"]],
-      processEscapes: true,
-      processEnvironments: true
-    },
-    options: {
-      ignoreHtmlClass: ".*|",
-      processHtmlClass: "arithmatex"
-    }
-  };
-
-  document$.subscribe(() => {
-    MathJax.startup.output.clearCache()
-    MathJax.typesetClear()
-    MathJax.texReset()
-    MathJax.typesetPromise()
-  })
-</script>
-
-## Task Lists
-
-> Go to [documentation](https://zensical.org/docs/authoring/lists/#using-task-lists)
-
-* [x] Install Zensical
-* [x] Configure `zensical.toml`
-* [x] Write amazing documentation
-* [ ] Deploy anywhere
-
-## Tooltips
-
-> Go to [documentation](https://zensical.org/docs/authoring/tooltips/)
-
-[Hover me][example]
-
-  [example]: https://example.com "I'm a tooltip!"
+Read next: [Architecture](architecture.md) for how the fleet's
+networking and hosts fit together, [CI/CD](ci-cd.md) for how every repo
+here — including this one — gets from a push to a running container,
+and [Observability](observability.md) for the monitoring/logging stack.

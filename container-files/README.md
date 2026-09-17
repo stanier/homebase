@@ -10,6 +10,11 @@ unit. See `ansible-playbooks/docs/VAULT.md` for how secrets reach these
 services and `ansible-playbooks/docs/Typical_Procedure.md` for restoring
 a host's data after a rebuild.
 
+Also published as a [Zensical](https://zensical.org) docs site at
+`docs.apps.testzone.internal/container-files/` (`zensical.toml`,
+`Containerfile`, `.gitea/workflows/deploy.yml` — same pattern as
+`homebase`'s docs site).
+
 ## Layout
 
 Each service subdirectory holds:

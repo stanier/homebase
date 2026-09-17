@@ -68,7 +68,11 @@ script itself.)
 
 ## Docs
 
-Start here before digging into role source:
+Also published as a [Zensical](https://zensical.org) site
+(`zensical.toml`, `Containerfile`, `.gitea/workflows/deploy.yml` —
+same pattern as `homebase`'s docs site) at
+`docs.apps.testzone.internal/ansible-playbooks/`. Start here before
+digging into role source:
 
 - [`docs/Typical_Procedure.md`](docs/Typical_Procedure.md) — creating a
   new VM (Tofu-first, with the legacy Ansible-only path as fallback), VM

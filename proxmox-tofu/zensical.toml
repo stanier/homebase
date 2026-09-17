@@ -1,12 +1,11 @@
 [project]
-site_url = "https://docs.apps.testzone.internal/"
-site_name = "homebase"
+site_url = "https://docs.apps.testzone.internal/proxmox-tofu/"
+site_name = "proxmox-tofu"
 
 nav = [
   { "Overview" = "index.md" },
-  { "Architecture" = "architecture.md" },
-  { "CI/CD" = "ci-cd.md" },
-  { "Observability" = "observability.md" },
+  { "Running it" = "running.md" },
+  { "VM lifecycle" = "vm-lifecycle.md" },
 ]
 
 [project.theme]

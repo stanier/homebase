@@ -16,6 +16,11 @@ still exists only as a fallback — see "Once this was trusted" below.
   updates. Still Ansible, unchanged. See
   `ansible-playbooks/docs/Typical_Procedure.md`.
 
+Also published as a [Zensical](https://zensical.org) docs site at
+`docs.apps.testzone.internal/proxmox-tofu/` (`zensical.toml`,
+`Containerfile`, `.gitea/workflows/deploy.yml` — same pattern as
+`homebase`'s docs site).
+
 ## Layout
 
 ```

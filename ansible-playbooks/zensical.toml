@@ -1,12 +1,13 @@
 [project]
-site_url = "https://docs.apps.testzone.internal/"
-site_name = "homebase"
+site_url = "https://docs.apps.testzone.internal/ansible-playbooks/"
+site_name = "ansible-playbooks"
 
 nav = [
   { "Overview" = "index.md" },
-  { "Architecture" = "architecture.md" },
-  { "CI/CD" = "ci-cd.md" },
-  { "Observability" = "observability.md" },
+  { "Typical procedure" = "Typical_Procedure.md" },
+  { "Vault & secrets" = "VAULT.md" },
+  { "Package management" = "PACKAGE_MANAGEMENT.md" },
+  { "Gitea Actions" = "GITEA_ACTIONS.md" },
 ]
 
 [project.theme]

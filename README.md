@@ -24,6 +24,9 @@ cd docs-site
 zensical serve
 ```
 
-Copied from the [`zensical-template`](https://zensical.org) starter — the
-initial `docs/` content is the stock example/reference pages and can be
-replaced with real homebase documentation over time.
+`docs/` covers the system as a whole — architecture, environments, and
+how `proxmox-tofu`, `ansible-playbooks`, and `container-files` hand off
+to each other. Detail specific to one of those repos lives in that
+repo's own Zensical docs site instead (each carries the same
+`zensical.toml`/`Containerfile`/`.gitea/workflows/deploy.yml` pattern
+as this one).
