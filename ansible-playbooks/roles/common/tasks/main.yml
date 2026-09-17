@@ -2,3 +2,4 @@
 - import_tasks: provisioning.yml
 - import_tasks: update_packages.yml
 - import_tasks: trust_root_ca.yml
+- import_tasks: internal_dns.yml

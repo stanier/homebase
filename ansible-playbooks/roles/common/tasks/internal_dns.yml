@@ -1,0 +1,29 @@
+---
+- name: Point the app-network interface's DNS at the internal resolver
+  # proxmox-tofu never sets nameservers for any VM (nameservers = [] in
+  # every module block there), so every VM has only ever gotten DNS from
+  # whatever its app-network DHCP happened to hand out -- confirmed via
+  # nmcli on app-proxy: 127.0.0.1/192.168.1.1/1.1.1.1, none of which know
+  # about {{ base_domain }}. That's why Caddy (Network=host, so it uses
+  # this VM's own OS resolver directly, not a container-scoped one) can
+  # obtain certs for gitea/grafana/etc. by IP but fails resolving a
+  # brand-new *.apps.{{ base_domain }} hostname for its internal ACME
+  # request. AdGuardHome (container-sandbox) already forwards
+  # non-internal queries upstream itself (see its own
+  # containerapps_secret_files config), so pointing here at just that
+  # one server covers both internal and external resolution correctly.
+  #
+  # "cloud-init eth0" matches cloud-init's deterministic per-interface
+  # connection naming and this fleet's convention that eth0 is always
+  # the app-network NIC (see group_vars/vm.yml's management_interface:
+  # eth1 for the other one) -- not parameterized further since nothing
+  # else in this repo needs to reference the app interface by name yet.
+  community.general.nmcli:
+    conn_name: "cloud-init eth0"
+    type: ethernet
+    dns4:
+      - "{{ hostvars['container-sandbox'].app_ip }}"
+    dns4_ignore_auto: true
+    state: present
+  when: "'vm' in group_names"
+  notify: reapply app interface connection

@@ -8,3 +8,10 @@
   ansible.builtin.command: update-ca-certificates
   tags:
     - ca_trust
+
+- name: reapply app interface connection
+  # nmcli's own module doesn't reliably reactivate an already-active
+  # connection just from updating its saved profile -- force it so the
+  # new DNS actually takes effect this run instead of waiting for the
+  # next reboot/manual nmcli up.
+  ansible.builtin.command: nmcli con up "cloud-init eth0"
