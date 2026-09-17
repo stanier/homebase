@@ -151,6 +151,14 @@
     use_ssh_args: true
     rsync_opts:
       - "--chown={{ containers_user }}:{{ containers_user }}"
+      # act_runner writes its persistent registration identity to
+      # gitea-runner/data/.runner on the target host at runtime -- it
+      # never exists in the local container-files checkout this syncs
+      # from, so plain --delete wiped it out on every single run, right
+      # before the "already registered" check below ever got to see it.
+      # That forced a fresh registration (and a brand-new runner in
+      # Gitea's UI) on every deploy instead of reusing the existing one.
+      - "--exclude=gitea-runner/data/.runner"
   when: containerapps_source == "local"
 
 - name: Ensure dns zone directory is writable by the container's unprivileged named user
@@ -446,6 +454,67 @@
   when: "'gitea-runner' in containerapps_quadlet_services"
   register: containerapps_gitea_runner_build
   changed_when: "'Writing manifest' in containerapps_gitea_runner_build.stderr"
+
+- name: Ensure SELinux policy development tools are available
+  # checkmodule/semodule_package (checkpolicy) and semodule
+  # (policycoreutils-python-utils) compile and load the custom module
+  # below -- neither is guaranteed present on a minimal Rocky template.
+  ansible.builtin.package:
+    name:
+      - checkpolicy
+      - policycoreutils-python-utils
+    state: present
+  when: "'gitea-runner' in containerapps_quadlet_services"
+
+- name: Ensure local SELinux policy module directory exists
+  ansible.builtin.file:
+    path: /etc/selinux/local
+    state: directory
+    mode: "0700"
+  when: "'gitea-runner' in containerapps_quadlet_services"
+
+- name: Deploy custom SELinux policy module source for gitea-runner's podman socket access
+  # gitea-runner bind-mounts the host's rootless podman.sock in as its own
+  # docker.sock (see gitea-runner.container) so act_runner can spawn job
+  # containers. SELinux's unix_stream_socket "connectto" check looks at the
+  # *listening process's* context (podman.socket's user service runs
+  # unconfined, type container_runtime_t), not the socket file's label --
+  # so no amount of :z/:Z relabeling the socket itself (which only affects
+  # file-object access, not connectto) fixes this, and neither does any
+  # sebooleans -- confirmed container_connect_any (the boolean that looks
+  # closest on paper) is scoped to tcp_socket name_connect, a different
+  # object class entirely. Confirmed via `ausearch -m avc`: "denied {
+  # connectto } ... scontext=...:container_t:... tcontext=unconfined_u:
+  # unconfined_r:container_runtime_t:... tclass=unix_stream_socket". This
+  # is exactly the one rule audit2allow would generate from that denial --
+  # narrower than any stock boolean, and the standard RHEL-family fix for
+  # a confined container that needs the podman/docker socket.
+  ansible.builtin.copy:
+    dest: /etc/selinux/local/gitea_runner_podman_sock.te
+    mode: "0644"
+    content: |
+      module gitea_runner_podman_sock 1.0;
+
+      require {
+          type container_t;
+          type container_runtime_t;
+          class unix_stream_socket connectto;
+      }
+
+      #============= container_t ==============
+      allow container_t container_runtime_t:unix_stream_socket connectto;
+  when: "'gitea-runner' in containerapps_quadlet_services"
+  register: containerapps_selinux_module_src
+
+- name: Compile and load the custom SELinux policy module
+  ansible.builtin.shell: |
+    set -e
+    checkmodule -M -m -o /etc/selinux/local/gitea_runner_podman_sock.mod /etc/selinux/local/gitea_runner_podman_sock.te
+    semodule_package -o /etc/selinux/local/gitea_runner_podman_sock.pp -m /etc/selinux/local/gitea_runner_podman_sock.mod
+    semodule -i /etc/selinux/local/gitea_runner_podman_sock.pp
+  when:
+    - "'gitea-runner' in containerapps_quadlet_services"
+    - containerapps_selinux_module_src.changed
 
 - name: Enable podman API socket for containers user
   ansible.builtin.systemd:
