@@ -17,7 +17,13 @@
   # Secrets are write-only in Gitea's API (no GET to diff against), and
   # this single PUT creates-or-updates -- so this always reports changed,
   # same as any other secret push in this fleet (see containerapps'
-  # gitea-runner .env writes, which have the same property).
+  # gitea-runner .env writes, which have the same property). Pushed as
+  # base64, not the raw multiline key -- ci-actions' deploy-to-apphost
+  # composite action expects base64 (its own comment explains why: a
+  # raw PEM/OpenSSH key round-tripped through a secrets field is prone
+  # to having its trailing newline stripped or line endings normalized,
+  # which is enough to corrupt it) and does its own base64 -d, so the
+  # value landing in SSH_PRIVATE_KEY has to already be encoded to match.
   ansible.builtin.uri:
     url: "{{ appdeploy_gitea_api_base }}/user/actions/secrets/SSH_PRIVATE_KEY"
     method: PUT
@@ -25,7 +31,7 @@
       Authorization: "token {{ gitea_ci_api_token }}"
     body_format: json
     body:
-      data: "{{ appdeploy_ci_private_key }}"
+      data: "{{ appdeploy_ci_private_key | b64encode }}"
     status_code: [200, 201, 204]
   delegate_to: gitea
   no_log: true

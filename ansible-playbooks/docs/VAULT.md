@@ -201,14 +201,18 @@ a secret -- copy `/tmp/appdeploy_ci_ed25519.pub`'s contents into
 Unlike every other secret in this doc, this one is also vaulted purely
 as an **offline backup**, not as the only copy Ansible ever reads: once
 set, `roles/appdeploy` reads `appdeploy_ci_private_key` and pushes it
-into Gitea itself, as a *user*-level Actions secret named
-`SSH_PRIVATE_KEY` (see `roles/appdeploy/tasks/gitea_ci_integration.yml`)
+into Gitea itself, base64-encoded, as a *user*-level Actions secret
+named `SSH_PRIVATE_KEY` (see `roles/appdeploy/tasks/gitea_ci_integration.yml`)
 -- Gitea inherits user-level Actions secrets/variables into every repo
 that user owns, so this happens once for the whole fleet, not once per
-app repo. The same task also pushes `app-host`'s address as a
-`DEPLOY_HOST` user-level Actions variable, so an app repo's workflow can
-reference `${{ secrets.SSH_PRIVATE_KEY }}` / `${{ vars.DEPLOY_HOST }}`
-without ever having been configured by hand in Gitea's UI. The only
+app repo. Base64, not the raw key, because `ci-actions`'
+`deploy-to-apphost` composite action expects that and does its own
+`base64 -d` (see that action's own comment on why: a raw multiline key
+is prone to newline mangling round-tripping through a secrets field).
+The same task also pushes `app-host`'s address as a `DEPLOY_HOST`
+user-level Actions variable, so an app repo's workflow can reference
+`${{ secrets.SSH_PRIVATE_KEY }}` / `${{ vars.DEPLOY_HOST }}` without
+ever having been configured by hand in Gitea's UI. The only
 manual step left per app repo is enabling Actions on it at all -- a
 plain repo-settings toggle, not a secret.
 

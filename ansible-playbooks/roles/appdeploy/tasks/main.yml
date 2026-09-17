@@ -76,8 +76,31 @@
 # is restricted to deploy.sh -- so this host being compromised only ever
 # lets an attacker write one Caddy route file and trigger a reload, not
 # touch anything else on that host.
+- name: Determine the management-VLAN jump host, if any, for the Caddy host
+  # appdeploy_caddy_route_hostname is a VM whose ansible_host is its
+  # management_ip (192.168.199.x, see hosts.ini's [vm] section), only
+  # reachable from the controller through [vm:vars]' ansible_ssh_common_args'
+  # ProxyCommand jump host -- Ansible's own connection plugin applies that
+  # automatically for normal tasks, but the raw ssh-keyscan command below
+  # bypasses the connection layer entirely. This system's ssh-keyscan build
+  # doesn't understand -o/ProxyCommand at all ("unknown option -- o"), so
+  # the jump has to happen a level up: extract "user@jumphost" out of
+  # ansible_ssh_common_args's ProxyCommand and wrap the whole ssh-keyscan
+  # invocation in an ssh call to that jump host instead.
+  ansible.builtin.set_fact:
+    appdeploy_caddy_jump_host: >-
+      {{ hostvars[appdeploy_caddy_route_hostname].ansible_ssh_common_args
+         | default('')
+         | regex_search('[A-Za-z0-9_.-]+@[0-9.]+') | default('', true) }}
+
 - name: Scan SSH host key for the Caddy host
-  ansible.builtin.command: "ssh-keyscan -t ed25519 {{ hostvars[appdeploy_caddy_route_hostname].ansible_host }}"
+  # Runs from the controller (delegate_to: localhost), same as
+  # containerapps' analogous git-host scan -- that one needs no jump host
+  # since it targets gitea directly on the reachable app_ip subnet.
+  ansible.builtin.command: >-
+    {{ 'ssh -o StrictHostKeyChecking=accept-new ' + appdeploy_caddy_jump_host
+       if appdeploy_caddy_jump_host | length > 0 else '' }}
+    ssh-keyscan -t ed25519 {{ hostvars[appdeploy_caddy_route_hostname].ansible_host }}
   register: appdeploy_caddy_host_hostkey
   changed_when: false
   delegate_to: localhost
