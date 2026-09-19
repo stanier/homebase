@@ -1,0 +1,30 @@
+[Unit]
+Description=Keycloak server
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+
+[Container]
+Image=quay.io/keycloak/keycloak@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c
+Exec=start
+Network=keycloak.network
+PublishPort=8080:8080
+Environment=KC_DB=postgres
+Environment=KC_DB_URL_HOST=postgresql
+Environment=KC_DB_URL_DATABASE=keycloak
+Environment=KC_DB_USERNAME=keycloak
+# HTTP only inside the container -- Caddy (see host_vars/container-sandbox.yml)
+# terminates real TLS and reverse_proxys plain HTTP here, same as every
+# other fronted service. xforwarded tells Keycloak to trust Caddy's
+# X-Forwarded-* headers for the externally-visible scheme/host instead
+# of what it sees on its own plain-HTTP listener.
+Environment=KC_HTTP_ENABLED=true
+Environment=KC_PROXY_HEADERS=xforwarded
+EnvironmentFile=/srv/containers/container-files/keycloak/.env
+PodmanArgs=--memory=2g
+PidsLimit=1024
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

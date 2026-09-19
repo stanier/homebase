@@ -45,6 +45,7 @@ A host only runs the services listed for it in
 | `dns` (BIND) | Authoritative DNS, RFC2136 dynamic updates for ACME DNS-01 |
 | `adguardhome` | Recursive DNS + ad/tracker blocking |
 | `authentik` | SSO / identity provider (server + worker + Postgres + Redis) |
+| `keycloak` | SSO / identity provider (server + Postgres) |
 | `gitea` | Git hosting |
 | `gitea-runner` | Gitea Actions CI runner (`act_runner`) |
 | `code-server` | Browser-based VS Code |
@@ -63,9 +64,10 @@ A host only runs the services listed for it in
   privileged/well-known port, or because they need to reach a native
   (non-containerized) service over loopback (`dovecot`/`roundcube` talking
   to host Postfix; see the comments in those `.container` files).
-- `authentik` is the exception: its four units share a dedicated
-  `authentik.network` Quadlet network so its containers can address each
-  other by `NetworkAlias` without publishing internal ports.
+- `authentik` and `keycloak` are the exceptions: each has its own
+  dedicated Quadlet network (`authentik.network` / `keycloak.network`)
+  so its containers can address each other by `NetworkAlias` without
+  publishing internal ports.
 - Named volumes (`Volume=<service>_<name>:/path`) are Podman-managed and
   host-local; bind mounts under `/srv/containers/container-files/...`
   come from this repo's sync. A few services (`gitea`'s

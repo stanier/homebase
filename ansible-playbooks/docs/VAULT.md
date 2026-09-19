@@ -22,6 +22,17 @@ which is still a separate process from `testrun.sh` and still needs that
 trick for its own standalone use), but with everything down to one
 invocation there's nothing left to thread between calls.
 
+Note this depends on `plays/vm/provision_vms.yml`'s Tofu run never
+needing its own vault password: `proxmox-tofu/scripts/vm-hostvars.py`/
+`proxmox-nodes.py`/`network-config.py` (its Terraform `external` data
+sources) read `hosts.ini`/`group_vars`/`host_vars` as plain YAML/text
+directly instead of shelling out to `ansible-inventory --list` — see
+those scripts' own docstrings for why: `ansible-inventory --list`
+eagerly renders every host's vars, including unrelated hosts' Jinja
+references to `group_vars/all/vault.yml` secrets, so it would demand a
+vault password even though nothing these scripts actually read is
+secret.
+
 `become_ask_pass=False` in `ansible.cfg`, so you're only ever prompted for
 the vault password — never a separate become password. This works because
 routine plays (`update`, `podman`, `root_password`) run as the `automation`
@@ -131,7 +142,12 @@ two consumers, so it's one vault entry referenced from both
 init credentials, consumed by `influxdb/.env` -- the token is also reused
 in the Grafana datasource provisioning file below since Grafana needs it
 to query InfluxDB), `vault_grafana_admin_password` (Grafana's admin
-login, consumed by `grafana/.env`), and `vault_adguardhome_admin_password_hash`
+login, consumed by `grafana/.env`), `vault_keycloak_pg_password`
+(Keycloak's Postgres password, consumed by both `keycloak/.env` and
+`postgresql/.env` via `containerapps_env.keycloak` -- same one value,
+two consumers, same convention as `vault_dns_acme_tsig_secret` above)
+and `vault_keycloak_bootstrap_password` (the `admin` realm-admin
+account's initial password, `KC_BOOTSTRAP_ADMIN_PASSWORD`), and `vault_adguardhome_admin_password_hash`
 (bcrypt hash, same convention as `root_password_hash` above -- never store
 the plaintext password itself -- consumed by `adguardhome/data/conf/AdGuardHome.yaml`
 via `containerapps_secret_files` so AdGuardHome skips its first-run setup

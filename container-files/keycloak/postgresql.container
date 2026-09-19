@@ -1,0 +1,19 @@
+[Unit]
+Description=Keycloak PostgreSQL
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/library/postgres:16-alpine
+Network=keycloak.network
+NetworkAlias=postgresql
+Environment=POSTGRES_USER=keycloak
+Environment=POSTGRES_DB=keycloak
+EnvironmentFile=/srv/containers/container-files/keycloak/.env
+Volume=keycloak_keycloak_postgresql:/var/lib/postgresql/data
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
