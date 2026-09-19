@@ -7,39 +7,36 @@ inventory (ansible-playbooks/inventory/<env>, ANSIBLE_INVENTORY_ENV --
 defaults to "testzone" since that's the only environment actually wired
 up to run this by hand today, see plays/provision_vms.yml's own comment
 for how a Tofu-driven Ansible run passes the real one through) instead of
-it being duplicated as Tofu literals:
-
-  - hosts.ini's inline vars (ansible_host, management_ip, app_ip,
-    proxmox_vmid) -- unique per host, declared directly on its [vm] line.
-  - group_vars/vm.yml's `proxmox_vm` block (node/template/cores/memory/
-    disk_resize) and standalone `proxmox_enabled`/`proxmox_protected` --
-    the same `proxmox_vm` block roles/hypervisor's create_vm.yml/
-    delete_vm.yml already read to clone/destroy VMs the Ansible-native
-    way (still live for the dangerzone environment, which hasn't moved
-    to proxmox-tofu).
-  - host_vars/<name>.yml, for any host that overrides the group default.
+it being duplicated as Tofu literals: ansible_host/management_ip/app_ip/
+proxmox_vmid from hosts.ini's [vm] lines, the proxmox_vm block (node/
+template/cores/memory/disk_resize) and proxmox_enabled/proxmox_protected
+from group_vars/vm.yml, overridden per-host by host_vars/<name>.yml.
 
 Also assigns each host a `node_alias` ("node1", "node2", ...) based on
 the order its real Proxmox node name appears in hosts.ini's [proxmox]
-group -- providers.tf's provider aliases are the same generic names, so
-vms.tf can select a VM's provider/module without either file ever
-naming an actual node. The real name (`node`) is still passed through
-for the module's own node_name/SSH-node use, which does have to match
-Proxmox reality.
+group -- providers.tf's provider aliases are the same generic names
+(see scripts/proxmox-nodes.py), so vms.tf can select a VM's provider/
+module without either file ever naming an actual node. The real name
+(`node`) is still passed through for the module's own node_name/SSH-node
+use, which does have to match Proxmox reality.
 
-This parses the plain YAML/INI directly rather than shelling out to
-`ansible-inventory --list`, since that also resolves
-group_vars/all/vault.yml and would demand a vault password just to read
-values that are neither secret nor templated.
+This shells out to `ansible-inventory --list` rather than hand-parsing
+hosts.ini/group_vars/host_vars -- see scripts/proxmox-nodes.py's
+docstring for the full rationale (that script used to be the hand-rolled
+one and it silently fell behind a real inventory refactor; this script
+already leaned that direction by reading group_vars/vm.yml as real YAML,
+this just finishes the job and gets Ansible's actual merge/precedence
+logic instead of reimplementing a piece of it by hand). It also means
+`ansible-inventory` itself now handles the case dangerzone's hosts.ini
+hits (a repeated "[vm]" group header) correctly for free, instead of
+this script needing its own merge-not-overwrite workaround for it.
 
-A host_vars override of `proxmox_vm` replaces the whole dict rather than
-merging individual keys -- matches Ansible's own hash_behaviour=replace
-default (ansible.cfg leaves the `merge` alternative commented out, and
-the Ansible project itself recommends against turning it on), so this
-script and create_vm.yml never disagree about a host's effective
-node/template/cores/memory. `proxmox_enabled`/`proxmox_protected` are
-plain scalars for exactly this reason too -- see group_vars/vm.yml's
-comment on why they're not nested inside proxmox_vm.
+Requires a vault password for the same reason proxmox-nodes.py does --
+group_vars/all/vault.yml has to decrypt just to load group_vars/all at
+all. Already satisfied in practice: this only ever runs as a Terraform
+external data source via scripts/tofu-with-vault-secrets.sh, which
+exports VAULT_PASS before exec'ing tofu, and external data source
+programs inherit that environment.
 
 stdin: the `external` data source's query object (ignored, no inputs
 needed here). stdout: {"json": "<hostname -> {node, node_alias,
@@ -50,43 +47,37 @@ locals.tf jsondecode()s it back out.
 """
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
-import yaml
 
-
-def parse_hosts_ini_group(hosts_ini: Path, group: str) -> dict:
-    hosts = {}
-    in_group = False
-    for line in hosts_ini.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("["):
-            in_group = line == f"[{group}]"
-            continue
-        if not in_group:
-            continue
-        tokens = line.split()
-        name, kv_tokens = tokens[0], tokens[1:]
-        # dangerzone's hosts.ini repeats "[vm]" as a second, separate
-        # section later in the file (group-membership-only, no inline
-        # vars) -- Ansible's own inventory parser merges repeated group
-        # headers like this, so this has to too, or a host listed in
-        # both sections would have its first section's proxmox_vmid/
-        # app_ip/management_ip silently overwritten by the second,
-        # var-less one.
-        hosts.setdefault(name, {}).update(
-            tok.split("=", 1) for tok in kv_tokens
+def load_inventory(ansible_playbooks_dir: Path, inventory_env: str) -> dict:
+    inventory_dir = ansible_playbooks_dir / "inventory" / inventory_env
+    if not (inventory_dir / "hosts.ini").is_file():
+        print(
+            f"hosts.ini not found under {inventory_dir} (set ANSIBLE_PLAYBOOKS_DIR "
+            "if ansible-playbooks isn't a sibling checkout)",
+            file=sys.stderr,
         )
-    return hosts
+        sys.exit(1)
 
-
-def load_yaml(path: Path) -> dict:
-    if not path.is_file():
-        return {}
-    return yaml.safe_load(path.read_text()) or {}
+    vault_pass_script = ansible_playbooks_dir / "scripts" / "vault_pass_from_env.sh"
+    proc = subprocess.run(
+        [
+            "ansible-inventory",
+            "-i", str(inventory_dir),
+            "--list",
+            "--vault-password-file", str(vault_pass_script),
+        ],
+        cwd=ansible_playbooks_dir,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr)
+        sys.exit(1)
+    return json.loads(proc.stdout)
 
 
 def main():
@@ -98,30 +89,18 @@ def main():
         os.environ.get("ANSIBLE_PLAYBOOKS_DIR", repo_root.parent / "ansible-playbooks")
     )
     inventory_env = os.environ.get("ANSIBLE_INVENTORY_ENV", "dangerzone")
-    inventory_dir = ansible_playbooks_dir / "inventory" / inventory_env
-    hosts_ini = inventory_dir / "hosts.ini"
 
-    if not hosts_ini.is_file():
-        print(
-            f"hosts.ini not found: {hosts_ini} (set ANSIBLE_PLAYBOOKS_DIR if "
-            "ansible-playbooks isn't a sibling checkout)",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    inventory = load_inventory(ansible_playbooks_dir, inventory_env)
+    hostvars = inventory.get("_meta", {}).get("hostvars", {})
+    vm_hosts = inventory.get("vm", {}).get("hosts", [])
+    proxmox_hosts = inventory.get("proxmox", {}).get("hosts", [])
 
-    inline_vars = parse_hosts_ini_group(hosts_ini, "vm")
-    group_vars = load_yaml(inventory_dir / "group_vars" / "vm.yml")
-
-    node_aliases = {
-        node_name: f"node{i + 1}"
-        for i, node_name in enumerate(parse_hosts_ini_group(hosts_ini, "proxmox"))
-    }
+    node_aliases = {name: f"node{i + 1}" for i, name in enumerate(proxmox_hosts)}
 
     result = {}
-    for name, inline in inline_vars.items():
-        host_vars = load_yaml(inventory_dir / "host_vars" / f"{name}.yml")
-
-        vm = host_vars.get("proxmox_vm", group_vars.get("proxmox_vm", {}))
+    for name in vm_hosts:
+        hv = hostvars.get(name, {})
+        vm = hv.get("proxmox_vm", {})
 
         host = {
             "node": vm["node"],
@@ -129,15 +108,11 @@ def main():
             "template": vm["template"],
             "cores": vm.get("cores", 2),
             "memory": vm.get("memory", 2048),
-            "enabled": host_vars.get(
-                "proxmox_enabled", group_vars.get("proxmox_enabled", True)
-            ),
-            "protected": host_vars.get(
-                "proxmox_protected", group_vars.get("proxmox_protected", True)
-            ),
-            "vmid": int(inline["proxmox_vmid"]),
-            "app_ip": inline["app_ip"],
-            "management_ip": inline["management_ip"],
+            "enabled": hv.get("proxmox_enabled", True),
+            "protected": hv.get("proxmox_protected", True),
+            "vmid": int(hv["proxmox_vmid"]),
+            "app_ip": hv["app_ip"],
+            "management_ip": hv["management_ip"],
         }
         if vm.get("disk_resize") is not None:
             host["disk_resize"] = vm["disk_resize"]

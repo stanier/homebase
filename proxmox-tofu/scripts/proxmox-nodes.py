@@ -5,24 +5,37 @@ environments/<env>/providers.tf.
 Reads hosts.ini's [proxmox] group (ansible-playbooks/inventory/<env>,
 ANSIBLE_INVENTORY_ENV -- defaults to "testzone", see vm-hostvars.py's own
 comment) and hands back each node's real name and API/SSH address, keyed
-by a
-generic "node1"/"node2"/... alias assigned in file order -- the same
-aliases scripts/vm-hostvars.py assigns each VM's `node_alias`, and the
-same ones providers.tf's provider blocks use. That keeps every actual
-Proxmox node name out of the .tf files entirely: providers.tf just picks
-data.external.proxmox_nodes.result["node1"], never the node's real name.
+by a generic "node1"/"node2"/... alias assigned in [proxmox] group
+order -- the same aliases scripts/vm-hostvars.py assigns each VM's
+`node_alias`, and the same ones providers.tf's provider blocks use. That
+keeps every actual Proxmox node name out of the .tf files entirely:
+providers.tf just picks data.external.proxmox_nodes.result["node1"],
+never the node's real name.
 
-Also reads ansible_user (required) and ansible_ssh_private_key_file
-(optional, defaults to the same ~/.ssh/id_ed25519 onboarding itself
-uses) -- the operator account providers.tf's ssh block connects to each
-node as. Keeps the operator's real username out of providers.tf the
-same way the node names are kept out: it comes back as each node's own
-ssh_user/ssh_private_key_file instead of a literal in the .tf file.
-These are read from group_vars/proxmox/*.yml (same real-YAML approach
-as vm-hostvars.py's group_vars/vm.yml -- this is where they actually
-live post-refactor), falling back to hosts.ini's inline [proxmox:vars]
-section for anything group_vars doesn't set, same precedence order
-Ansible itself gives group_vars over inventory-file group vars.
+Also reads each node's effective ansible_user (required) and
+ansible_ssh_private_key_file (optional, defaults to the same
+~/.ssh/id_ed25519 onboarding itself uses) -- the operator account
+providers.tf's ssh block connects to each node as.
+
+This shells out to `ansible-inventory --list` rather than hand-parsing
+hosts.ini/group_vars/host_vars (this script's own previous approach,
+and still vm-hostvars.py's -- see that script's docstring for why it
+avoided this originally): a hand-rolled parser silently falls behind
+the moment inventory conventions change -- e.g. ansible_user moving
+from hosts.ini's inline [proxmox:vars] into group_vars/proxmox/ broke
+this exact script once already. `ansible-inventory` is the same
+resolver every real Ansible run uses, so this can't drift from it.
+
+That does mean this now needs a vault password -- group_vars/all/vault.yml
+is a Vault-encrypted file, and Ansible has to decrypt it just to *load*
+group_vars/all at all, even for hosts/vars that have nothing to do with
+secrets. Not a new constraint in practice: this script only ever runs as
+a Terraform external data source invoked via
+scripts/tofu-with-vault-secrets.sh, which already exports VAULT_PASS
+into its own environment before exec'ing tofu -- external data source
+programs inherit that, so ansible-playbooks/scripts/vault_pass_from_env.sh
+(the same VAULT_PASS-reading vault password script used elsewhere) just
+works here unchanged.
 
 stdin: the `external` data source's query object (ignored, no inputs
 needed here). stdout: {"json": "<alias -> {name, host, ssh_user,
@@ -32,67 +45,37 @@ allows string values in its result).
 """
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
-import yaml
 
-
-def load_group_vars(inventory_dir: Path, group: str) -> dict:
-    # Mirrors real Ansible group_vars resolution for a group: either a
-    # single group_vars/<group>.yml file, or a group_vars/<group>/
-    # directory of them merged in filename order -- same directory-form
-    # proxmox/ actually uses here (main.yml, templates.yml).
-    single_file = inventory_dir / "group_vars" / f"{group}.yml"
-    if single_file.is_file():
-        return yaml.safe_load(single_file.read_text()) or {}
-
-    group_dir = inventory_dir / "group_vars" / group
-    merged = {}
-    for path in sorted(group_dir.glob("*.yml")):
-        merged.update(yaml.safe_load(path.read_text()) or {})
-    return merged
-
-
-def parse_hosts_ini_group(hosts_ini: Path, group: str) -> dict:
-    hosts = {}
-    in_group = False
-    for line in hosts_ini.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("["):
-            in_group = line == f"[{group}]"
-            continue
-        if not in_group:
-            continue
-        tokens = line.split()
-        name, kv_tokens = tokens[0], tokens[1:]
-        # See vm-hostvars.py's identical copy of this function for why
-        # this merges rather than overwrites -- a repeated group header
-        # (dangerzone's hosts.ini does this for "[vm]") must not blank
-        # out a host's vars from its first appearance.
-        hosts.setdefault(name, {}).update(
-            tok.split("=", 1) for tok in kv_tokens
+def load_inventory(ansible_playbooks_dir: Path, inventory_env: str) -> dict:
+    inventory_dir = ansible_playbooks_dir / "inventory" / inventory_env
+    if not (inventory_dir / "hosts.ini").is_file():
+        print(
+            f"hosts.ini not found under {inventory_dir} (set ANSIBLE_PLAYBOOKS_DIR "
+            "if ansible-playbooks isn't a sibling checkout)",
+            file=sys.stderr,
         )
-    return hosts
+        sys.exit(1)
 
-
-def parse_hosts_ini_group_vars(hosts_ini: Path, group: str) -> dict:
-    in_section = False
-    group_vars = {}
-    for line in hosts_ini.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("["):
-            in_section = line == f"[{group}:vars]"
-            continue
-        if not in_section:
-            continue
-        key, value = line.split("=", 1)
-        group_vars[key.strip()] = value.strip().strip("'\"")
-    return group_vars
+    vault_pass_script = ansible_playbooks_dir / "scripts" / "vault_pass_from_env.sh"
+    proc = subprocess.run(
+        [
+            "ansible-inventory",
+            "-i", str(inventory_dir),
+            "--list",
+            "--vault-password-file", str(vault_pass_script),
+        ],
+        cwd=ansible_playbooks_dir,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr)
+        sys.exit(1)
+    return json.loads(proc.stdout)
 
 
 def main():
@@ -104,45 +87,37 @@ def main():
         os.environ.get("ANSIBLE_PLAYBOOKS_DIR", repo_root.parent / "ansible-playbooks")
     )
     inventory_env = os.environ.get("ANSIBLE_INVENTORY_ENV", "testzone")
-    inventory_dir = ansible_playbooks_dir / "inventory" / inventory_env
-    hosts_ini = inventory_dir / "hosts.ini"
 
-    if not hosts_ini.is_file():
+    inventory = load_inventory(ansible_playbooks_dir, inventory_env)
+    hostvars = inventory.get("_meta", {}).get("hostvars", {})
+    proxmox_hosts = inventory.get("proxmox", {}).get("hosts", [])
+
+    if not proxmox_hosts:
         print(
-            f"hosts.ini not found: {hosts_ini} (set ANSIBLE_PLAYBOOKS_DIR if "
-            "ansible-playbooks isn't a sibling checkout)",
+            f"No hosts in the [proxmox] group for inventory/{inventory_env}",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    nodes = parse_hosts_ini_group(hosts_ini, "proxmox")
-    group_vars = dict(parse_hosts_ini_group_vars(hosts_ini, "proxmox"))
-    group_vars.update(load_group_vars(inventory_dir, "proxmox"))
-
-    if "ansible_user" not in group_vars:
-        print(
-            f"No ansible_user for the [proxmox] group -- checked "
-            f"{inventory_dir / 'group_vars' / 'proxmox'} and {hosts_ini}'s "
-            "[proxmox:vars] section. providers.tf's ssh block needs one to "
-            "know who to connect as.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    ssh_user = group_vars["ansible_user"]
-    ssh_private_key_file = group_vars.get(
-        "ansible_ssh_private_key_file", "~/.ssh/id_ed25519"
-    )
-
-    result = {
-        f"node{i + 1}": {
+    result = {}
+    for i, name in enumerate(proxmox_hosts):
+        hv = hostvars.get(name, {})
+        if "ansible_user" not in hv:
+            print(
+                f"{name} (in [proxmox]) has no effective ansible_user -- "
+                "providers.tf's ssh block needs one to know who to connect as. "
+                "Set it in group_vars/proxmox/, group_vars/all, or host_vars.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        result[f"node{i + 1}"] = {
             "name": name,
-            "host": inline["ansible_host"],
-            "ssh_user": ssh_user,
-            "ssh_private_key_file": ssh_private_key_file,
+            "host": hv["ansible_host"],
+            "ssh_user": hv["ansible_user"],
+            "ssh_private_key_file": hv.get(
+                "ansible_ssh_private_key_file", "~/.ssh/id_ed25519"
+            ),
         }
-        for i, (name, inline) in enumerate(nodes.items())
-    }
 
     print(json.dumps({"json": json.dumps(result)}))
 
