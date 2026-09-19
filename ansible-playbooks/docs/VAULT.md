@@ -423,6 +423,40 @@ mints it directly from the same offline intermediate CA
 intermediate example above) via `community.crypto`, so it needs no
 separate secret or manual step.
 
+#### Example: freeipa (roles/freeipa)
+
+Two bootstrap passwords, both required before `freeipa_enabled: true`
+will actually install anything -- `roles/freeipa`'s own `assert` task
+fails loudly if either is empty rather than letting
+`ipa-server-install` do something undefined with a blank password:
+
+`vault_freeipa_ds_password` -- the Directory Manager (389 Directory
+Server root) password. `vault_freeipa_admin_password` -- the `admin`
+Kerberos/IPA principal's password, used for both initial login and any
+later `ipa` CLI/API calls (e.g. the bind-account setup Plan 3's
+Keycloak/Authentik LDAP federation needs).
+
+```
+ansible-vault edit group_vars/all/vault.yml
+```
+
+```yaml
+vault_freeipa_ds_password: "..."
+vault_freeipa_admin_password: "..."
+```
+
+Both are exposed as `freeipa_ds_password`/`freeipa_admin_password` in
+`group_vars/all/vars.yml`, same convention as everything else here.
+`freeipa_realm` isn't a secret -- it's derived from `base_domain`
+(uppercased) by `roles/freeipa`'s own default, no vault entry needed.
+
+Unlike `mail1`/`authentik`, FreeIPA deliberately doesn't take over this
+zone's DNS (`--setup-dns` is never passed to `ipa-server-install`) --
+AdGuardHome/bind on `container-sandbox` stays the one authoritative
+server, and `freeipa`'s A record plus the `_kerberos`/`_ldap` SRV
+records IPA clients need live by hand in that host's `dns/` zone file
+instead. See `roles/freeipa/tasks/main.yml`'s own comment for why.
+
 #### The automation account
 
 `roles/common` also provisions a dedicated `automation` service account on

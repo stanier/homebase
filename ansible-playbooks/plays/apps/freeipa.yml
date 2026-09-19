@@ -1,0 +1,7 @@
+---
+- name: Configure freeipa as the fleet's directory/Kerberos server
+  hosts: freeipa
+  become: true
+
+  roles:
+    - freeipa

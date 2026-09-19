@@ -41,6 +41,7 @@ following the conventions described in `docs/`.
 | `appdeploy` / `appdeploy_caddy` | Forced-command CI deploy key + Gitea Actions wiring for app repos; Caddy vhost generation for deployed apps |
 | `backup` | Daily restic backups of container volumes/bind-mounts, per host |
 | `mail_server` / `postfix` | Native (non-containerized) mail stack, pairs with `container-files/dovecot` + `roundcube` |
+| `freeipa` | Native (non-containerized) FreeIPA install -- directory/Kerberos source of truth, DNS deliberately left to AdGuardHome/bind |
 | `logging` | Central logging setup |
 | `node_exporter` / `podman_exporter` | Prometheus exporters for non-container-managed hosts |
 | `tailscale` | Tailscale enrollment |

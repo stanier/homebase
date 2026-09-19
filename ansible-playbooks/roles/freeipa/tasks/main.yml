@@ -1,0 +1,87 @@
+---
+# FreeIPA is deliberately NOT deployed through roles/containerapps --
+# the upstream freeipa-server container image needs systemd as PID 1
+# plus broad privileges (Directory Server, Dogtag CA, KDC, and Apache
+# all running as sub-services under one process), which doesn't fit
+# rootless Podman/Quadlet like every other service in this fleet. This
+# is a native package install on its own VM instead, same pattern as
+# roles/mail_server/roles/postfix.
+#
+# ipa-server-install is neither idempotent nor safe to re-run -- it
+# refuses outright once /etc/ipa/default.conf exists -- so every
+# mutating task below is gated on that file's absence rather than
+# relying on the installer's own (nonexistent) check-mode support.
+- name: Check whether this host is already an IPA server
+  ansible.builtin.stat:
+    path: /etc/ipa/default.conf
+  register: freeipa_default_conf
+  when: freeipa_enabled
+
+- name: Require admin/DS passwords before installing
+  ansible.builtin.assert:
+    that:
+      - freeipa_admin_password | length > 0
+      - freeipa_ds_password | length > 0
+    fail_msg: >-
+      freeipa_admin_password/freeipa_ds_password are empty -- set
+      vault_freeipa_admin_password/vault_freeipa_ds_password in
+      group_vars/all/vault.yml first (see docs/VAULT.md).
+  when:
+    - freeipa_enabled
+    - not freeipa_default_conf.stat.exists
+
+- name: Install the FreeIPA server package
+  ansible.builtin.package:
+    name: ipa-server
+    state: present
+  when:
+    - freeipa_enabled
+    - ansible_os_family == "RedHat"
+
+- name: Set this host's hostname to its FQDN
+  # ipa-server-install refuses a short hostname -- the realm/Kerberos
+  # principal namespace is built from the FQDN, and fixing this after
+  # the fact means a full reinstall, not a config edit.
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}.{{ base_domain }}"
+  when: freeipa_enabled
+
+- name: Ensure the FQDN resolves locally before install
+  # ipa-server-install does its own forward/reverse DNS sanity checks
+  # and aborts if the hostname it was just given doesn't resolve -- belt
+  # and suspenders alongside the real A record this depends on
+  # (container-sandbox's dns/ zone -- see that host_vars' freeipa
+  # comment), since a fresh VM's own /etc/hosts has no entry yet for
+  # the FQDN roles/common's cloud-init only just gave it.
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: "^{{ ansible_default_ipv4.address }}\\s"
+    line: "{{ ansible_default_ipv4.address }} {{ inventory_hostname }}.{{ base_domain }} {{ inventory_hostname }}"
+    state: present
+  when: freeipa_enabled
+
+- name: Run ipa-server-install
+  # No --setup-dns: AdGuardHome/bind (container-sandbox) already owns
+  # base_domain's authoritative DNS. Running FreeIPA's own integrated
+  # DNS alongside it would mean two servers claiming authority over the
+  # same zone -- letting IPA clients discover it via the SRV records
+  # this repo's dns/ zone file carries by hand instead is the same
+  # outcome without the split-brain risk.
+  #
+  # no_log because the passwords are only ever passed as argv here --
+  # ipa-server-install has no stdin/file-based password option, so this
+  # is the best available short of accepting them briefly appearing in
+  # /proc/<pid>/cmdline during the run.
+  ansible.builtin.command:
+    argv:
+      - ipa-server-install
+      - --unattended
+      - "--realm={{ freeipa_realm }}"
+      - "--domain={{ base_domain }}"
+      - "--ds-password={{ freeipa_ds_password }}"
+      - "--admin-password={{ freeipa_admin_password }}"
+      - "--hostname={{ inventory_hostname }}.{{ base_domain }}"
+  no_log: true
+  when:
+    - freeipa_enabled
+    - not freeipa_default_conf.stat.exists

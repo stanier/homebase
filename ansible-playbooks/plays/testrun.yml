@@ -13,6 +13,8 @@
   tags: update
 - import_playbook: apps/mail_server.yml
   tags: mail_server
+- import_playbook: apps/freeipa.yml
+  tags: freeipa
 - import_playbook: apps/podman.yml
   tags: podman
 - import_playbook: system/logging.yml

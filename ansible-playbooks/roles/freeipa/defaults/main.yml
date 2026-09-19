@@ -1,0 +1,18 @@
+---
+# Master switch -- off by default (same idiom as roles/postfix's
+# postfix_enabled), so this role can be wired into a play now without
+# doing anything until a host's host_vars turns it on.
+freeipa_enabled: false
+
+# FreeIPA convention is realm == uppercased DNS domain -- group_vars/all/vars.yml
+# sets this from base_domain automatically, override only if a host
+# genuinely needs a different realm than the fleet's own domain.
+freeipa_realm: "{{ base_domain | upper }}"
+
+# Directory Manager (freeipa_ds_password) and IPA admin (freeipa_admin_password)
+# bootstrap passwords. Required once freeipa_enabled is true -- left
+# empty so a host that turns this on without setting them fails loudly
+# via the assert in tasks/main.yml instead of ipa-server-install doing
+# something undefined with blank passwords. See docs/VAULT.md.
+freeipa_ds_password: ""
+freeipa_admin_password: ""
