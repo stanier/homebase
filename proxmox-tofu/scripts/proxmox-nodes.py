@@ -12,13 +12,17 @@ same ones providers.tf's provider blocks use. That keeps every actual
 Proxmox node name out of the .tf files entirely: providers.tf just picks
 data.external.proxmox_nodes.result["node1"], never the node's real name.
 
-Also reads [proxmox:vars]'s ansible_user (required) and
-ansible_ssh_private_key_file (optional, defaults to the same
-~/.ssh/id_ed25519 onboarding itself uses) -- the operator account
-providers.tf's ssh block connects to each node as. Keeps the operator's
-real username out of providers.tf the same way the node names are kept
-out: it comes back as each node's own ssh_user/ssh_private_key_file
-instead of a literal in the .tf file.
+Also reads ansible_user (required) and ansible_ssh_private_key_file
+(optional, defaults to the same ~/.ssh/id_ed25519 onboarding itself
+uses) -- the operator account providers.tf's ssh block connects to each
+node as. Keeps the operator's real username out of providers.tf the
+same way the node names are kept out: it comes back as each node's own
+ssh_user/ssh_private_key_file instead of a literal in the .tf file.
+These are read from group_vars/proxmox/*.yml (same real-YAML approach
+as vm-hostvars.py's group_vars/vm.yml -- this is where they actually
+live post-refactor), falling back to hosts.ini's inline [proxmox:vars]
+section for anything group_vars doesn't set, same precedence order
+Ansible itself gives group_vars over inventory-file group vars.
 
 stdin: the `external` data source's query object (ignored, no inputs
 needed here). stdout: {"json": "<alias -> {name, host, ssh_user,
@@ -30,6 +34,24 @@ import json
 import os
 import sys
 from pathlib import Path
+
+import yaml
+
+
+def load_group_vars(inventory_dir: Path, group: str) -> dict:
+    # Mirrors real Ansible group_vars resolution for a group: either a
+    # single group_vars/<group>.yml file, or a group_vars/<group>/
+    # directory of them merged in filename order -- same directory-form
+    # proxmox/ actually uses here (main.yml, templates.yml).
+    single_file = inventory_dir / "group_vars" / f"{group}.yml"
+    if single_file.is_file():
+        return yaml.safe_load(single_file.read_text()) or {}
+
+    group_dir = inventory_dir / "group_vars" / group
+    merged = {}
+    for path in sorted(group_dir.glob("*.yml")):
+        merged.update(yaml.safe_load(path.read_text()) or {})
+    return merged
 
 
 def parse_hosts_ini_group(hosts_ini: Path, group: str) -> dict:
@@ -82,7 +104,8 @@ def main():
         os.environ.get("ANSIBLE_PLAYBOOKS_DIR", repo_root.parent / "ansible-playbooks")
     )
     inventory_env = os.environ.get("ANSIBLE_INVENTORY_ENV", "testzone")
-    hosts_ini = ansible_playbooks_dir / "inventory" / inventory_env / "hosts.ini"
+    inventory_dir = ansible_playbooks_dir / "inventory" / inventory_env
+    hosts_ini = inventory_dir / "hosts.ini"
 
     if not hosts_ini.is_file():
         print(
@@ -93,12 +116,15 @@ def main():
         sys.exit(1)
 
     nodes = parse_hosts_ini_group(hosts_ini, "proxmox")
-    group_vars = parse_hosts_ini_group_vars(hosts_ini, "proxmox")
+    group_vars = dict(parse_hosts_ini_group_vars(hosts_ini, "proxmox"))
+    group_vars.update(load_group_vars(inventory_dir, "proxmox"))
 
     if "ansible_user" not in group_vars:
         print(
-            f"[proxmox:vars] in {hosts_ini} has no ansible_user -- "
-            "providers.tf's ssh block needs one to know who to connect as.",
+            f"No ansible_user for the [proxmox] group -- checked "
+            f"{inventory_dir / 'group_vars' / 'proxmox'} and {hosts_ini}'s "
+            "[proxmox:vars] section. providers.tf's ssh block needs one to "
+            "know who to connect as.",
             file=sys.stderr,
         )
         sys.exit(1)
