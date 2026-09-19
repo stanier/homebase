@@ -1,0 +1,8 @@
+---
+- name: Generate SSH config entries from inventory
+  hosts: all
+  become: false
+  gather_facts: false
+
+  roles:
+    - ssh_config

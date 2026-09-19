@@ -1,0 +1,11 @@
+---
+# Where the generated per-environment SSH config snippet is written,
+# and the ~/.ssh/config this role ensures includes it -- see
+# tasks/main.yml.
+ssh_config_dir: "~/.ssh/config.d"
+ssh_config_main: "~/.ssh/config"
+
+# Derived from the inventory directory name (testzone/dangerzone) so
+# both environments' entries can coexist without Host-alias collisions
+# -- see templates/ssh_config.j2.
+ssh_config_env: "{{ inventory_dir | basename }}"

@@ -44,6 +44,7 @@ following the conventions described in `docs/`.
 | `logging` | Central logging setup |
 | `node_exporter` / `podman_exporter` | Prometheus exporters for non-container-managed hosts |
 | `tailscale` | Tailscale enrollment |
+| `ssh_config` | Generates `~/.ssh/config.d/homebase-<env>.conf` Host entries from inventory (operator's machine, not fleet infra) |
 | `workstation` | Personal workstation provisioning (not fleet infra) |
 
 ## Running things

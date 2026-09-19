@@ -1,0 +1,112 @@
+---
+# Local-only role: turns the current environment's inventory into SSH
+# config Host entries for the operator's own ~/.ssh/config, so e.g.
+# `ssh gitea.{{ ssh_config_env }}` works without hand-maintaining a
+# separate config. Every task here targets localhost regardless of
+# which inventory host the play is looping over -- it never connects
+# to the fleet itself, which is also why plays/system/ssh_config.yml
+# can skip fact-gathering entirely.
+
+- name: Ensure ~/.ssh/config.d exists
+  ansible.builtin.file:
+    path: "{{ ssh_config_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  connection: local
+  become: false
+  run_once: true
+
+# Per-host connection settings, extracted once so the template doesn't
+# have to re-derive ProxyCommand from ansible_ssh_common_args itself.
+# HostName is deliberately the only thing that stays purely per-host --
+# everything else here is a candidate for hoisting into a shared group
+# or *.{{ ssh_config_env }} block below, whenever hosts share a value.
+- name: Build per-host connection facts
+  ansible.builtin.set_fact:
+    ssh_config_hosts: "{{ ssh_config_hosts | default([]) + [{
+      'host': item,
+      'hostname': hostvars[item].ansible_host,
+      'user': hostvars[item].ansible_user | default(''),
+      'port': hostvars[item].ansible_port | default('') | string,
+      'identity_file': hostvars[item].ansible_ssh_private_key_file | default(''),
+      'proxy_command': ('ProxyCommand' in (hostvars[item].ansible_ssh_common_args | default(''))) |
+        ternary((hostvars[item].ansible_ssh_common_args | default('')) |
+          regex_replace('^.*ProxyCommand=\"(.*?)\".*$', '\\1'), ''),
+    }] }}"
+  loop: "{{ groups['all'] | sort }}"
+  when: hostvars[item].ansible_host is defined
+  delegate_to: localhost
+  connection: local
+  become: false
+  run_once: true
+
+# A field only belongs in the *.{{ ssh_config_env }} block if literally
+# every host agrees on it (a single unique, non-blank value) -- these
+# four map 1:1 onto ssh_config_hosts' non-hostname keys.
+- name: Determine connection settings shared by every host
+  ansible.builtin.set_fact:
+    ssh_config_common_user: "{{ ssh_config_hosts | map(attribute='user') | unique | list }}"
+    ssh_config_common_port: "{{ ssh_config_hosts | map(attribute='port') | unique | list }}"
+    ssh_config_common_identity: "{{ ssh_config_hosts | map(attribute='identity_file') | unique | list }}"
+    ssh_config_common_proxy: "{{ ssh_config_hosts | map(attribute='proxy_command') | unique | list }}"
+  delegate_to: localhost
+  connection: local
+  become: false
+  run_once: true
+
+# Tag each host with a 'profile' -- the subset of its settings that
+# *aren't* already fleet-wide-common -- so the template can group hosts
+# sharing a profile into one "Host a.zone b.zone" block instead of
+# repeating User/IdentityFile/ProxyCommand/Port per host. Blank slots in
+# a profile mean "nothing group-specific to set here" (either the field
+# is common-to-all and already covered by the wildcard block, or this
+# host just doesn't set it).
+- name: Tag each host with its non-shared connection profile
+  ansible.builtin.set_fact:
+    ssh_config_hosts_profiled: "{{ ssh_config_hosts_profiled | default([]) + [h | combine({'profile': [
+      h.user if not (ssh_config_common_user | length == 1 and ssh_config_common_user[0] != '') else '',
+      h.identity_file if not (ssh_config_common_identity | length == 1 and ssh_config_common_identity[0] != '') else '',
+      h.proxy_command if not (ssh_config_common_proxy | length == 1 and ssh_config_common_proxy[0] != '') else '',
+      h.port if not (ssh_config_common_port | length == 1 and ssh_config_common_port[0] != '') else '',
+    ]})] }}"
+  loop: "{{ ssh_config_hosts }}"
+  loop_control:
+    loop_var: h
+  delegate_to: localhost
+  connection: local
+  become: false
+  run_once: true
+
+- name: Swap in the profiled host list
+  ansible.builtin.set_fact:
+    ssh_config_hosts: "{{ ssh_config_hosts_profiled }}"
+  delegate_to: localhost
+  connection: local
+  become: false
+  run_once: true
+
+- name: Generate SSH config entries for every inventory host
+  ansible.builtin.template:
+    src: ssh_config.j2
+    dest: "{{ ssh_config_dir }}/homebase-{{ ssh_config_env }}.conf"
+    mode: "0600"
+  delegate_to: localhost
+  connection: local
+  become: false
+  run_once: true
+
+# Include must come before any conflicting Host block for its entries
+# to take priority (ssh_config uses first-match-wins), hence BOF --
+# harmless if the user's own config never defines the same aliases.
+- name: Ensure ~/.ssh/config includes config.d/*.conf
+  ansible.builtin.lineinfile:
+    path: "{{ ssh_config_main }}"
+    create: true
+    mode: "0600"
+    insertbefore: BOF
+    line: "Include config.d/*.conf"
+  delegate_to: localhost
+  connection: local
+  become: false
+  run_once: true

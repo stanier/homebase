@@ -1,0 +1,53 @@
+# Managed by ansible-playbooks (roles/ssh_config) -- do not edit by
+# hand, this file is overwritten on every run of
+# plays/system/ssh_config.yml. Source: inventory/{{ ssh_config_env }}.
+#
+# Deliberately layered least-specific-last: per-host blocks (HostName
+# only) first, then one block per group of hosts sharing the same
+# non-common settings, then a single *.{{ ssh_config_env }} block for
+# whatever every host agrees on. ssh_config takes the first value it
+# finds for each keyword, so a more specific block earlier always wins
+# over a shared default later -- see roles/ssh_config/tasks/main.yml.
+{% for host in ssh_config_hosts | sort(attribute='host') %}
+
+Host {{ host.host }}.{{ ssh_config_env }}
+    HostName {{ host.hostname }}
+{% endfor %}
+{% for profile, hosts in ssh_config_hosts | groupby('profile') %}
+{% set hosts = hosts | list %}
+{% if profile != ['', '', '', ''] %}
+
+Host {{ hosts | map(attribute='host') | map('regex_replace', '^(.*)$', '\\1.' + ssh_config_env) | join(' ') }}
+{% if profile[0] %}
+    User {{ profile[0] }}
+{% endif %}
+{% if profile[1] %}
+    IdentityFile {{ profile[1] }}
+{% endif %}
+{% if profile[2] %}
+    ProxyCommand {{ profile[2] }}
+{% endif %}
+{% if profile[3] %}
+    Port {{ profile[3] }}
+{% endif %}
+{% endif %}
+{% endfor %}
+{% if (ssh_config_common_user | length == 1 and ssh_config_common_user[0] != '') or
+      (ssh_config_common_identity | length == 1 and ssh_config_common_identity[0] != '') or
+      (ssh_config_common_proxy | length == 1 and ssh_config_common_proxy[0] != '') or
+      (ssh_config_common_port | length == 1 and ssh_config_common_port[0] != '') %}
+
+Host *.{{ ssh_config_env }}
+{% if ssh_config_common_user | length == 1 and ssh_config_common_user[0] != '' %}
+    User {{ ssh_config_common_user[0] }}
+{% endif %}
+{% if ssh_config_common_identity | length == 1 and ssh_config_common_identity[0] != '' %}
+    IdentityFile {{ ssh_config_common_identity[0] }}
+{% endif %}
+{% if ssh_config_common_proxy | length == 1 and ssh_config_common_proxy[0] != '' %}
+    ProxyCommand {{ ssh_config_common_proxy[0] }}
+{% endif %}
+{% if ssh_config_common_port | length == 1 and ssh_config_common_port[0] != '' %}
+    Port {{ ssh_config_common_port[0] }}
+{% endif %}
+{% endif %}
