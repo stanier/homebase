@@ -20,23 +20,20 @@ module without either file ever naming an actual node. The real name
 (`node`) is still passed through for the module's own node_name/SSH-node
 use, which does have to match Proxmox reality.
 
-This shells out to `ansible-inventory --list` rather than hand-parsing
-hosts.ini/group_vars/host_vars -- see scripts/proxmox-nodes.py's
-docstring for the full rationale (that script used to be the hand-rolled
-one and it silently fell behind a real inventory refactor; this script
-already leaned that direction by reading group_vars/vm.yml as real YAML,
-this just finishes the job and gets Ansible's actual merge/precedence
-logic instead of reimplementing a piece of it by hand). It also means
-`ansible-inventory` itself now handles the case dangerzone's hosts.ini
-hits (a repeated "[vm]" group header) correctly for free, instead of
-this script needing its own merge-not-overwrite workaround for it.
-
-Requires a vault password for the same reason proxmox-nodes.py does --
-group_vars/all/vault.yml has to decrypt just to load group_vars/all at
-all. Already satisfied in practice: this only ever runs as a Terraform
-external data source via scripts/tofu-with-vault-secrets.sh, which
-exports VAULT_PASS before exec'ing tofu, and external data source
-programs inherit that environment.
+Parses hosts.ini/group_vars/host_vars directly (plain YAML/text, no
+templating) rather than shelling out to `ansible-inventory --list` --
+same rationale as scripts/network-config.py: `ansible-inventory --list`
+eagerly renders *every* host's vars, including other hosts' Jinja
+references to group_vars/all/vault.yml secrets (e.g. host_vars/
+turkey.yml's proxmox_api_token_secret) that have nothing to do with
+what this script reads, so it would demand a vault password this script
+otherwise has no use for. This isn't the original hand-rolled parser
+resurrected, though -- that one hit a real bug (ansible_user moving
+from hosts.ini's inline [proxmox:vars] into group_vars/proxmox/ silently
+broke it) because it hardcoded *where* a var lived. This one discovers
+every group_vars/<group>/*.yml file by glob and parses real YAML
+instead, so a var moving between files in that directory can't drop out
+silently the same way.
 
 stdin: the `external` data source's query object (ignored, no inputs
 needed here). stdout: {"json": "<hostname -> {node, node_alias,
@@ -47,37 +44,64 @@ locals.tf jsondecode()s it back out.
 """
 import json
 import os
-import subprocess
+import re
+import shlex
 import sys
 from pathlib import Path
 
+import yaml
 
-def load_inventory(ansible_playbooks_dir: Path, inventory_env: str) -> dict:
-    inventory_dir = ansible_playbooks_dir / "inventory" / inventory_env
-    if not (inventory_dir / "hosts.ini").is_file():
-        print(
-            f"hosts.ini not found under {inventory_dir} (set ANSIBLE_PLAYBOOKS_DIR "
-            "if ansible-playbooks isn't a sibling checkout)",
-            file=sys.stderr,
-        )
-        sys.exit(1)
 
-    vault_pass_script = ansible_playbooks_dir / "scripts" / "vault_pass_from_env.sh"
-    proc = subprocess.run(
-        [
-            "ansible-inventory",
-            "-i", str(inventory_dir),
-            "--list",
-            "--vault-password-file", str(vault_pass_script),
-        ],
-        cwd=ansible_playbooks_dir,
-        capture_output=True,
-        text=True,
-    )
-    if proc.returncode != 0:
-        sys.stderr.write(proc.stderr)
-        sys.exit(1)
-    return json.loads(proc.stdout)
+def parse_hosts_ini(hosts_ini: Path) -> dict:
+    """Returns {group_name: [(hostname, {var: value, ...}), ...]}, in
+    file order. Appends to a group across repeated headers instead of
+    letting a later one win -- dangerzone's hosts.ini has hit a
+    repeated "[vm]" header before, and real Ansible merges rather than
+    overwrites in that case."""
+    groups: dict = {}
+    current = None
+    for raw_line in hosts_ini.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        header = re.match(r"^\[([^\]:]+)(:vars)?\]$", line)
+        if header:
+            current = None if header.group(2) else groups.setdefault(header.group(1), [])
+            continue
+        if current is None:
+            continue
+        tokens = shlex.split(line)
+        name, pairs = tokens[0], tokens[1:]
+        current.append((name, dict(pair.split("=", 1) for pair in pairs)))
+    return groups
+
+
+def load_yaml_vars(path: Path) -> dict:
+    """group_vars/<group> and host_vars/<host> can each be a single
+    <name>.yml file or a directory of *.yml files (Ansible merges every
+    file inside a directory, in alphabetical order) -- handle both,
+    returning {} if neither exists."""
+    if path.is_dir():
+        merged = {}
+        for f in sorted(path.glob("*.yml")):
+            merged.update(yaml.safe_load(f.read_text()) or {})
+        return merged
+    yml_path = path.with_suffix(".yml")
+    if yml_path.is_file():
+        return yaml.safe_load(yml_path.read_text()) or {}
+    return {}
+
+
+def effective_hostvars(inventory_dir: Path, group: str, name: str, inline_vars: dict) -> dict:
+    """Ansible's real precedence for the vars these scripts touch:
+    group_vars/<group> < hosts.ini inline vars < host_vars/<host>.
+    group_vars/all is deliberately never consulted -- see this script's
+    own docstring."""
+    merged = {}
+    merged.update(load_yaml_vars(inventory_dir / "group_vars" / group))
+    merged.update(inline_vars)
+    merged.update(load_yaml_vars(inventory_dir / "host_vars" / name))
+    return merged
 
 
 def main():
@@ -89,17 +113,23 @@ def main():
         os.environ.get("ANSIBLE_PLAYBOOKS_DIR", repo_root.parent / "ansible-playbooks")
     )
     inventory_env = os.environ.get("ANSIBLE_INVENTORY_ENV", "dangerzone")
+    inventory_dir = ansible_playbooks_dir / "inventory" / inventory_env
+    hosts_ini = inventory_dir / "hosts.ini"
+    if not hosts_ini.is_file():
+        print(
+            f"hosts.ini not found under {inventory_dir} (set ANSIBLE_PLAYBOOKS_DIR "
+            "if ansible-playbooks isn't a sibling checkout)",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
-    inventory = load_inventory(ansible_playbooks_dir, inventory_env)
-    hostvars = inventory.get("_meta", {}).get("hostvars", {})
-    vm_hosts = inventory.get("vm", {}).get("hosts", [])
-    proxmox_hosts = inventory.get("proxmox", {}).get("hosts", [])
-
+    groups = parse_hosts_ini(hosts_ini)
+    proxmox_hosts = [name for name, _ in groups.get("proxmox", [])]
     node_aliases = {name: f"node{i + 1}" for i, name in enumerate(proxmox_hosts)}
 
     result = {}
-    for name in vm_hosts:
-        hv = hostvars.get(name, {})
+    for name, inline_vars in groups.get("vm", []):
+        hv = effective_hostvars(inventory_dir, "vm", name, inline_vars)
         vm = hv.get("proxmox_vm", {})
 
         host = {

@@ -21,7 +21,17 @@
 - delegate_to: localhost
   become: false
   vars:
-    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    # ansible_playbook_python is the interpreter actually running
+    # ansible-playbook itself, which isn't necessarily the one with
+    # proxmoxer installed -- e.g. a system-wide ansible-core install
+    # alongside a per-operator venv used only for extra libraries.
+    # $VIRTUAL_ENV (set by the shell on `source venv/bin/activate`) is
+    # inherited by the ansible-playbook process regardless of which
+    # Python actually runs it, so prefer that when present.
+    ansible_python_interpreter: >-
+      {{ (lookup('env', 'VIRTUAL_ENV') ~ '/bin/python3')
+         if lookup('env', 'VIRTUAL_ENV')
+         else ansible_playbook_python }}
   module_defaults:
     group/community.proxmox.proxmox:
       api_host: "{{ ansible_host }}"

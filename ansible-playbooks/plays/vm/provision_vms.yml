@@ -11,7 +11,7 @@
     # kept reading/writing testzone's own Tofu project and state
     # regardless of which environment this play was actually invoked
     # against. Every environment goes through Tofu now (dangerzone's
-    # existing VMs were imported into environments/dangerzone's state
+    # existing VMs were imported into the dangerzone workspace's state
     # via scripts/import.sh dangerzone), so there's no separate
     # per-environment opt-in flag here anymore -- this play just always
     # runs Tofu for whichever environment/hosts it's pointed at.
@@ -41,8 +41,9 @@
 
     - name: Destroy the selected hosts' VMs
       community.general.terraform:
-        project_path: "{{ proxmox_tofu_dir }}/environments/{{ tofu_environment }}"
+        project_path: "{{ proxmox_tofu_dir }}/environments"
         binary_path: "{{ tofu_binary }}"
+        workspace: "{{ tofu_environment }}"
         state: absent
         targets: "{{ tofu_targets }}"
       # ANSIBLE_INVENTORY_ENV tells scripts/vm-hostvars.py and
@@ -56,8 +57,9 @@
 
     - name: Apply the selected hosts' VMs
       community.general.terraform:
-        project_path: "{{ proxmox_tofu_dir }}/environments/{{ tofu_environment }}"
+        project_path: "{{ proxmox_tofu_dir }}/environments"
         binary_path: "{{ tofu_binary }}"
+        workspace: "{{ tofu_environment }}"
         state: present
         targets: "{{ tofu_targets }}"
         parallelism: 1
@@ -73,26 +75,30 @@
         - "{{ app_ip }}"
         - "{{ management_ip }}"
 
-    # app_ip, not management_ip -- same reasoning as
-    # roles/hypervisor/tasks/legacy_create_vm.yml's identical wait (the
-    # Ansible-native path this play replaced): management_ip depends on
-    # roles/management_network having already run (split routing, sshd
-    # ListenAddress), which happens later in plays/testrun.yml, not here.
-    # app_ip is the one address guaranteed live off this VM's only
-    # default route at boot. Without this, onboarding.yml's very next
-    # task races the guest's own boot/cloud-init and fails with a plain
-    # connection timeout instead of ever getting a chance to succeed.
+    # management_ip, not app_ip -- onboarding.yml and every later play
+    # connect via management_ip (hosts.ini's ansible_host default) over
+    # the management-network bastion (group_vars/vm.yml's
+    # ansible_ssh_common_args ProxyCommand to 192.168.104.246 -- see
+    # onboarding.yml's own comment calling management_ip "the
+    # non-routed management network"), so that's the path that actually
+    # needs to be up before onboarding.yml's very next task runs.
     #
-    # Assumes this play is targeting genuinely fresh VMs (testzone's
-    # normal repeatable destroy+recreate cycle, see group_vars/vm.yml) --
-    # re-targeting an already-provisioned host here (sshd already bound
-    # to management_ip only, app_ip no longer answering at all) will
-    # just eat the full 300s and fail for that host. Scope -l to hosts
-    # that actually need (re)provisioning, or use --clean, rather than
-    # mixing fresh and already-onboarded hosts in the same run.
+    # ansible.builtin.wait_for can't be used for this: it opens a raw
+    # socket from the controller and has no notion of
+    # ansible_ssh_common_args/ProxyCommand, so it can never succeed
+    # against a bastion-only address regardless of how long it waits.
+    # wait_for_connection instead drives a real connection attempt
+    # through the configured connection plugin -- forced to `ssh` here
+    # (the play default is `connection: local`, needed for this play's
+    # own Tofu/local-fact tasks) so it actually goes through the same
+    # bastion tunnel onboarding.yml will use, and
+    # ansible_python_interpreter reset to auto-detect since the play's
+    # own override further up points at the *controller's* Python, not
+    # this guest's.
     - name: Wait for the new VM to answer SSH
-      ansible.builtin.wait_for:
-        host: "{{ app_ip }}"
-        port: 22
+      ansible.builtin.wait_for_connection:
         delay: 5
         timeout: 300
+      vars:
+        ansible_connection: ssh
+        ansible_python_interpreter: auto_silent
