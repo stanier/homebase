@@ -17,6 +17,23 @@
   gather_facts: false
 
   tasks:
+    # This play runs immediately after plays/apps/podman.yml, which may
+    # have just (re)started keycloak's container -- Quarkus startup plus
+    # any pending DB migration easily takes longer than an instant, and
+    # the admin API port can accept a TCP connection before the app is
+    # actually ready to answer it (hence "Connection reset by peer"
+    # rather than a plain refused/timeout on the federation call below
+    # if this wait is skipped). /realms/master is public/unauthenticated
+    # and only starts responding once Keycloak is fully up.
+    - name: Wait for Keycloak's API to be ready
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8080/realms/master
+        status_code: 200
+      register: keycloak_ready
+      until: keycloak_ready.status | default(0) == 200
+      retries: 30
+      delay: 5
+
     - name: Add/update the FreeIPA LDAP user federation provider
       community.general.keycloak_user_federation:
         auth_keycloak_url: http://127.0.0.1:8080
@@ -83,4 +100,8 @@
               user.model.attribute: email
               read.only: true
               is.mandatory.in.ldap: false
+      register: freeipa_ldap_federation_result
+      until: freeipa_ldap_federation_result is succeeded
+      retries: 3
+      delay: 10
       no_log: true
