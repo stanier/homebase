@@ -70,6 +70,15 @@ resource "proxmox_virtual_environment_vm" "this" {
   initialization {
     datastore_id = var.storage
 
+    # Proxmox defaults this to true, running a full package upgrade via
+    # cloud-init on every first boot before Ansible ever touches the
+    # host -- redundant with the update plays, and slower/flakier since
+    # it runs unattended with no retry (see the rocky-10 template's
+    # cloud-final.service failing outright on a transient AppStream
+    # mirror skew). Package upgrades belong to Ansible's update plays,
+    # not first boot.
+    upgrade = false
+
     ip_config {
       ipv4 {
         address = "${var.app_ip}/${var.network_prefix}"

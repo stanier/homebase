@@ -43,7 +43,7 @@ now (see `../proxmox-tofu/README.md`) -- that's the supported default:
    ```yaml
    proxmox_vm:
      node: turkey          # which Proxmox host (must be in [proxmox])
-     template: debian-13   # key into proxmox_templates
+     template: rocky-10   # key into proxmox_templates
      cores: 2
      memory: 2048
      # disk_resize: 20G

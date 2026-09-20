@@ -18,11 +18,22 @@
   # the app-network NIC (see group_vars/vm.yml's management_interface:
   # eth1 for the other one) -- not parameterized further since nothing
   # else in this repo needs to reference the app interface by name yet.
+  #
+  # 9.9.9.9 (Quad9) is listed second as a bootstrap fallback: this task
+  # runs during onboarding/baseline_packages, well before apps/podman.yml
+  # actually deploys AdGuardHome onto container-sandbox, so every VM
+  # (including container-sandbox itself) would otherwise have no working
+  # resolver -- and thus no dnf/EPEL/mirror access -- for everything that
+  # runs in between. glibc's resolver only falls through to the second
+  # nameserver once the first fails to answer, so once AdGuardHome is up
+  # container-sandbox's app_ip continues to be used for both internal and
+  # external lookups as before.
   community.general.nmcli:
     conn_name: "cloud-init eth0"
     type: ethernet
     dns4:
       - "{{ hostvars['container-sandbox'].app_ip }}"
+      - "9.9.9.9"
     dns4_ignore_auto: true
     state: present
   when: "'vm' in group_names"
