@@ -76,6 +76,23 @@
           connectionPooling: true
           pagination: true
         mappers:
+          # Keycloak's admin UI auto-creates this "username" mapper for
+          # every new LDAP federation, but creating one via the raw API
+          # (like this task does) doesn't -- and remove_unspecified_mappers'
+          # default of true then deletes it if it somehow existed from a
+          # prior UI-driven setup. Without it, Keycloak's LDAP search
+          # never fetches usernameLDAPAttribute's value (uid) at all,
+          # so every login fails with "User returned from LDAP has null
+          # username!" despite connectionUrl/bindDn/bindCredential all
+          # being correct.
+          - name: username
+            providerId: user-attribute-ldap-mapper
+            providerType: org.keycloak.storage.ldap.mappers.LDAPStorageMapper
+            config:
+              ldap.attribute: uid
+              user.model.attribute: username
+              read.only: true
+              is.mandatory.in.ldap: true
           - name: first name
             providerId: user-attribute-ldap-mapper
             providerType: org.keycloak.storage.ldap.mappers.LDAPStorageMapper
