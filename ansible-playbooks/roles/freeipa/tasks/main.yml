@@ -85,3 +85,51 @@
   when:
     - freeipa_enabled
     - not freeipa_default_conf.stat.exists
+
+# --- Plan 3: LDAP bind accounts for Keycloak/Authentik -----------------
+
+- name: Create LDAP bind service accounts for Keycloak/Authentik
+  # krbpasswordexpiration far in the future: FreeIPA normally flags an
+  # admin-set password as requiring an interactive change at next login
+  # (fine for a real user, useless for a service account that only ever
+  # does a non-interactive LDAP simple bind and has no way to complete
+  # that flow). Setting an explicit far-future expiration is what
+  # bypasses that -- see this module's own EXAMPLES block, which uses
+  # the same field for the opposite effect (forcing an immediate reset).
+  #
+  # update_password: on_create -- without it, every run would try to
+  # reset the password back to this value and report "changed" forever
+  # even when nothing actually needs to change.
+  community.general.ipa_user:
+    name: "{{ item.name }}"
+    givenname: "{{ item.name }}"
+    sn: Bind Account
+    password: "{{ item.password }}"
+    krbpasswordexpiration: "20990101000000"
+    update_password: on_create
+    ipa_host: "{{ inventory_hostname }}.{{ base_domain }}"
+    ipa_user: admin
+    ipa_pass: "{{ freeipa_admin_password }}"
+  loop:
+    - name: svc-keycloak-bind
+      password: "{{ freeipa_keycloak_bind_password }}"
+    - name: svc-authentik-bind
+      password: "{{ freeipa_authentik_bind_password }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  when: freeipa_enabled
+
+- name: Fetch FreeIPA's CA certificate for distribution to LDAP consumers
+  # Keycloak/Authentik both need this to trust LDAPS -- see vars.yml's
+  # freeipa_ca_cert (same lookup('file', ...) distribution pattern as
+  # root_ca_cert, a different and unrelated CA). Always re-fetched
+  # rather than gated on freeipa_default_conf: cheap, idempotent (fetch
+  # only reports changed if the content actually differs), and this way
+  # a CA renewal gets picked up automatically instead of needing a
+  # manual copy step remembered.
+  ansible.builtin.fetch:
+    src: /etc/ipa/ca.crt
+    dest: "{{ inventory_dir }}/group_vars/files/freeipa-ca.crt"
+    flat: true
+  when: freeipa_enabled

@@ -15,6 +15,11 @@ Environment=AUTHENTIK_POSTGRESQL__NAME=authentik
 EnvironmentFile=/srv/containers/container-files/authentik/.env
 Volume=authentik_authentik_media:/media
 Volume=authentik_authentik_templates:/templates
+# Plan 3's FreeIPA LDAP Source -- authentik auto-discovers any YAML
+# under /blueprints (see its own docs on the blueprint directory
+# structure), applying it on startup and re-applying on change without
+# needing the admin UI's own "Apply" click each time.
+Volume=/srv/containers/container-files/authentik/data/blueprints/freeipa-ldap-source.yaml:/blueprints/local/freeipa-ldap-source.yaml:ro,z
 PodmanArgs=--memory=2g
 PidsLimit=1024
 

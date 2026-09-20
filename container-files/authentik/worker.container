@@ -14,6 +14,9 @@ Environment=AUTHENTIK_POSTGRESQL__NAME=authentik
 EnvironmentFile=/srv/containers/container-files/authentik/.env
 Volume=authentik_authentik_media:/media
 Volume=authentik_authentik_templates:/templates
+# See server.container's identical comment -- the worker is what
+# actually executes blueprint apply/sync tasks.
+Volume=/srv/containers/container-files/authentik/data/blueprints/freeipa-ldap-source.yaml:/blueprints/local/freeipa-ldap-source.yaml:ro,z
 PodmanArgs=--memory=2g
 PidsLimit=1024
 

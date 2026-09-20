@@ -19,7 +19,14 @@ Environment=KC_DB_USERNAME=keycloak
 # of what it sees on its own plain-HTTP listener.
 Environment=KC_HTTP_ENABLED=true
 Environment=KC_PROXY_HEADERS=xforwarded
+# Trusts FreeIPA's own Dogtag-issued CA for the LDAPS connection its
+# user federation provider makes (Plan 3) -- a separate, unrelated CA
+# from the fleet's own Caddy-signed one. KC_TRUSTSTORE_PATHS accepts a
+# PEM file directly (Keycloak converts it in-memory), no keytool/JKS
+# step needed. Additive to the JDK's own cacerts, not a replacement.
+Environment=KC_TRUSTSTORE_PATHS=/etc/keycloak-freeipa-ca.crt
 EnvironmentFile=/srv/containers/container-files/keycloak/.env
+Volume=/srv/containers/container-files/keycloak/data/freeipa-ca.crt:/etc/keycloak-freeipa-ca.crt:ro,z
 PodmanArgs=--memory=2g
 PidsLimit=1024
 

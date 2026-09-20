@@ -462,9 +462,20 @@ vault_freeipa_admin_password: "..."
 ```
 
 Both are exposed as `freeipa_ds_password`/`freeipa_admin_password` in
-`group_vars/all/vars.yml`, same convention as everything else here.
-`freeipa_realm` isn't a secret -- it's derived from `base_domain`
-(uppercased) by `roles/freeipa`'s own default, no vault entry needed.
+`group_vars/all/vars.yml`, same convention as everything here.
+`freeipa_realm`/`freeipa_basedn` aren't secrets -- both are derived from
+`base_domain` by `group_vars/all/vars.yml` directly, no vault entry
+needed.
+
+Two more, for Plan 3's LDAP bind accounts (`roles/freeipa`'s own
+`ipa_user` task creates `svc-keycloak-bind`/`svc-authentik-bind` from
+these): `vault_freeipa_keycloak_bind_password` and
+`vault_freeipa_authentik_bind_password`, exposed the same way as
+`freeipa_keycloak_bind_password`/`freeipa_authentik_bind_password`.
+These are the passwords Keycloak's LDAP User Federation and Authentik's
+LDAP Source authenticate to FreeIPA with -- not personal accounts, so
+generate them the same way as any other opaque service secret
+(`openssl rand -base64 24`, no need to remember them).
 
 Unlike `mail1`/`authentik`, FreeIPA deliberately doesn't take over this
 zone's DNS (`--setup-dns` is never passed to `ipa-server-install`) --

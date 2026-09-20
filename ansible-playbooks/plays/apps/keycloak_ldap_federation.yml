@@ -1,0 +1,86 @@
+---
+# Plan 3: points Keycloak's LDAP User Federation at FreeIPA. This talks
+# to Keycloak's own admin REST API (not a config file), so it runs as a
+# separate play from plays/apps/podman.yml rather than a
+# containerapps_secret_files template -- there's no file for this on
+# disk to template in the first place.
+#
+# Requires roles/freeipa's bind-account task and CA-cert fetch to have
+# already run at least once (freeipa_keycloak_bind_password's account
+# needs to exist, and group_vars/files/freeipa-ca.crt needs to exist for
+# server.container's KC_TRUSTSTORE_PATHS mount -- see that file's own
+# comment), and plays/apps/podman.yml to have deployed keycloak with
+# that mount in place, before this can succeed.
+- name: Configure Keycloak's LDAP User Federation against FreeIPA
+  hosts: keycloak
+  become: false
+  gather_facts: false
+
+  tasks:
+    - name: Add/update the FreeIPA LDAP user federation provider
+      community.general.keycloak_user_federation:
+        auth_keycloak_url: http://127.0.0.1:8080
+        auth_realm: master
+        auth_username: admin
+        auth_password: "{{ keycloak_bootstrap_password }}"
+        realm: master
+        name: freeipa
+        state: present
+        provider_id: ldap
+        provider_type: org.keycloak.storage.UserStorageProvider
+        config:
+          priority: 0
+          enabled: true
+          cachePolicy: DEFAULT
+          editMode: READ_ONLY
+          importEnabled: true
+          syncRegistrations: false
+          vendor: other
+          usernameLDAPAttribute: uid
+          rdnLDAPAttribute: uid
+          # ipaUniqueID, not entryUUID (OpenLDAP) or nsUniqueId (raw
+          # 389-ds) -- FreeIPA's own stable per-object identifier,
+          # present on every user entry via the ipaobject class.
+          uuidLDAPAttribute: ipaUniqueID
+          userObjectClasses: "inetOrgPerson, organizationalPerson"
+          connectionUrl: "ldaps://freeipa.{{ base_domain }}:636"
+          usersDn: "cn=users,cn=accounts,{{ freeipa_basedn }}"
+          authType: simple
+          bindDn: "uid=svc-keycloak-bind,cn=users,cn=accounts,{{ freeipa_basedn }}"
+          bindCredential: "{{ freeipa_keycloak_bind_password }}"
+          searchScope: 1
+          validatePasswordPolicy: false
+          trustEmail: true
+          # ldapsOnly, not always -- Keycloak's own default JDK
+          # truststore already handles every other outbound HTTPS call
+          # this instance makes fine; only the LDAPS connection itself
+          # needs KC_TRUSTSTORE_PATHS' FreeIPA CA consulted.
+          useTruststoreSpi: ldapsOnly
+          connectionPooling: true
+          pagination: true
+        mappers:
+          - name: first name
+            providerId: user-attribute-ldap-mapper
+            providerType: org.keycloak.storage.ldap.mappers.LDAPStorageMapper
+            config:
+              ldap.attribute: givenName
+              user.model.attribute: firstName
+              read.only: true
+              is.mandatory.in.ldap: false
+          - name: last name
+            providerId: user-attribute-ldap-mapper
+            providerType: org.keycloak.storage.ldap.mappers.LDAPStorageMapper
+            config:
+              ldap.attribute: sn
+              user.model.attribute: lastName
+              read.only: true
+              is.mandatory.in.ldap: false
+          - name: email
+            providerId: user-attribute-ldap-mapper
+            providerType: org.keycloak.storage.ldap.mappers.LDAPStorageMapper
+            config:
+              ldap.attribute: mail
+              user.model.attribute: email
+              read.only: true
+              is.mandatory.in.ldap: false
+      no_log: true

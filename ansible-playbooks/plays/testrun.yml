@@ -17,6 +17,8 @@
   tags: freeipa
 - import_playbook: apps/podman.yml
   tags: podman
+- import_playbook: apps/keycloak_ldap_federation.yml
+  tags: keycloak_ldap_federation
 - import_playbook: system/logging.yml
   tags: logging
 - import_playbook: apps/mail.yml

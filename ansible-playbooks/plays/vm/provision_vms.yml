@@ -1,10 +1,9 @@
 ---
 - name: Provision Proxmox VMs via OpenTofu
-  hosts: all
+  hosts: vm
   connection: local
   gather_facts: false
   vars:
-    ansible_python_interpreter: "{{ ansible_playbook_python }}"
     # Derived from whichever inventory directory -i actually pointed at
     # (e.g. ".../inventory/dangerzone" -> "dangerzone"), not hardcoded --
     # this used to be a literal "testzone", which meant every task below
@@ -21,59 +20,90 @@
     tofu_clean: false
 
   tasks:
-    - name: Compute this host's Tofu module target address
-      ansible.builtin.set_fact:
-        tofu_target: module.vm_node{{ groups['proxmox'].index(proxmox_vm.node) + 1 }}["{{ inventory_hostname }}"]
+    # ansible_python_interpreter scoped to this block, not the whole play
+    # -- these tasks all run with connection: local (the play default) and
+    # need the controller's own venv Python (proxmoxer etc. live there),
+    # not the guest's. It used to be a play-wide var, but task-level vars
+    # on "Wait for the new VM to answer SSH" below don't actually override
+    # a play-level var for this connection-plugin lookup (tested against
+    # ansible-core 2.21.4: the task kept getting the play's literal
+    # python3.13 path and running it verbatim against the guest, which
+    # only has python3.12 -- no auto-detection ever kicked in), so scoping
+    # it here instead is what actually keeps it off that task.
+    - name: Provision this host's VM via OpenTofu
+      vars:
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      block:
+        - name: Compute this host's Tofu module target address
+          ansible.builtin.set_fact:
+            tofu_target: module.vm_node{{ groups['proxmox'].index(proxmox_vm.node) + 1 }}["{{ inventory_hostname }}"]
 
-    - name: Collect every selected host's Tofu target into one list
-      ansible.builtin.set_fact:
-        tofu_targets: "{{ ansible_play_hosts_all | map('extract', hostvars, 'tofu_target') | list }}"
-      run_once: true
+        - name: Collect every selected host's Tofu target into one list
+          ansible.builtin.set_fact:
+            tofu_targets: "{{ ansible_play_hosts_all | map('extract', hostvars, 'tofu_target') | list }}"
+          run_once: true
 
-    - name: Compute the Proxmox API token secrets Tofu's providers need
-      ansible.builtin.set_fact:
-        tofu_secret_env: "{{ (tofu_secret_env | default({})) | combine({'TF_VAR_node' ~ (node_idx + 1) ~ '_api_token_secret': lookup('vars', 'vault_' ~ item ~ '_proxmox_api_token_secret')}) }}"
-      loop: "{{ groups['proxmox'] }}"
-      loop_control:
-        index_var: node_idx
-      run_once: true
-      no_log: true
+        - name: Compute the Proxmox API token secrets Tofu's providers need
+          ansible.builtin.set_fact:
+            tofu_secret_env: "{{ (tofu_secret_env | default({})) | combine({'TF_VAR_node' ~ (node_idx + 1) ~ '_api_token_secret': lookup('vars', 'vault_' ~ item ~ '_proxmox_api_token_secret')}) }}"
+          loop: "{{ groups['proxmox'] }}"
+          loop_control:
+            index_var: node_idx
+          run_once: true
+          no_log: true
 
-    - name: Destroy the selected hosts' VMs
-      community.general.terraform:
-        project_path: "{{ proxmox_tofu_dir }}/environments"
-        binary_path: "{{ tofu_binary }}"
-        workspace: "{{ tofu_environment }}"
-        state: absent
-        targets: "{{ tofu_targets }}"
-      # ANSIBLE_INVENTORY_ENV tells scripts/vm-hostvars.py and
-      # scripts/proxmox-nodes.py (Tofu's own `external` data sources)
-      # which inventory/<env> to read -- they used to hardcode
-      # "testzone" themselves, same issue as tofu_environment above.
-      environment: "{{ tofu_secret_env | combine({'ANSIBLE_INVENTORY_ENV': tofu_environment}) }}"
-      run_once: true
-      no_log: true
-      when: tofu_clean | bool
+        - name: Destroy the selected hosts' VMs
+          community.general.terraform:
+            project_path: "{{ proxmox_tofu_dir }}/environments"
+            binary_path: "{{ tofu_binary }}"
+            workspace: "{{ tofu_environment }}"
+            state: absent
+            targets: "{{ tofu_targets }}"
+          # ANSIBLE_INVENTORY_ENV tells scripts/vm-hostvars.py and
+          # scripts/proxmox-nodes.py (Tofu's own `external` data sources)
+          # which inventory/<env> to read -- they used to hardcode
+          # "testzone" themselves, same issue as tofu_environment above.
+          environment: "{{ tofu_secret_env | combine({'ANSIBLE_INVENTORY_ENV': tofu_environment}) }}"
+          run_once: true
+          no_log: true
+          when: tofu_clean | bool
 
-    - name: Apply the selected hosts' VMs
-      community.general.terraform:
-        project_path: "{{ proxmox_tofu_dir }}/environments"
-        binary_path: "{{ tofu_binary }}"
-        workspace: "{{ tofu_environment }}"
-        state: present
-        targets: "{{ tofu_targets }}"
-        parallelism: 1
-      environment: "{{ tofu_secret_env | combine({'ANSIBLE_INVENTORY_ENV': tofu_environment}) }}"
-      run_once: true
-      no_log: false
+        - name: Apply the selected hosts' VMs
+          community.general.terraform:
+            project_path: "{{ proxmox_tofu_dir }}/environments"
+            binary_path: "{{ tofu_binary }}"
+            workspace: "{{ tofu_environment }}"
+            state: present
+            targets: "{{ tofu_targets }}"
+            parallelism: 1
+          environment: "{{ tofu_secret_env | combine({'ANSIBLE_INVENTORY_ENV': tofu_environment}) }}"
+          run_once: true
+          no_log: false
 
-    - name: Forget this host's previously known SSH host keys
-      ansible.builtin.known_hosts:
-        name: "{{ item }}"
-        state: absent
-      loop:
-        - "{{ app_ip }}"
-        - "{{ management_ip }}"
+        - name: Forget this host's previously known SSH host keys
+          ansible.builtin.known_hosts:
+            name: "{{ item }}"
+            state: absent
+          loop:
+            - "{{ app_ip }}"
+            - "{{ management_ip }}"
+
+    # The block above runs every task via connection: local with
+    # ansible_python_interpreter pinned to the controller's own venv
+    # Python (python3.13) -- but Ansible records that as this
+    # inventory_hostname's "discovered_interpreter_python" fact
+    # regardless of connection type, and with fact_caching=jsonfile
+    # (ansible.cfg, 24h timeout) that gets persisted to disk and outlives
+    # this play. Any later SSH-based task against the same
+    # inventory_hostname -- the "Wait for the new VM to answer SSH" task
+    # right below, and testrun.yml's very next play (onboarding.yml),
+    # which shares this same run's fact cache -- would find that cached
+    # python3.13 and use it verbatim instead of auto-detecting the
+    # guest's real interpreter, failing with "module interpreter ...
+    # was not found" since the guest doesn't have python3.13. Clearing
+    # facts here forces fresh auto-detection for everything after.
+    - name: Clear this host's cached facts before connecting over SSH
+      ansible.builtin.meta: clear_facts
 
     # management_ip, not app_ip -- onboarding.yml and every later play
     # connect via management_ip (hosts.ini's ansible_host default) over
@@ -89,16 +119,14 @@
     # against a bastion-only address regardless of how long it waits.
     # wait_for_connection instead drives a real connection attempt
     # through the configured connection plugin -- forced to `ssh` here
-    # (the play default is `connection: local`, needed for this play's
-    # own Tofu/local-fact tasks) so it actually goes through the same
-    # bastion tunnel onboarding.yml will use, and
-    # ansible_python_interpreter reset to auto-detect since the play's
-    # own override further up points at the *controller's* Python, not
-    # this guest's.
+    # (the play default is `connection: local`, needed for the Tofu block
+    # above) so it actually goes through the same bastion tunnel
+    # onboarding.yml will use. No ansible_python_interpreter override
+    # needed here -- that's scoped to the Tofu block above now, so this
+    # task is free to auto-detect the guest's own Python normally.
     - name: Wait for the new VM to answer SSH
       ansible.builtin.wait_for_connection:
         delay: 5
         timeout: 300
       vars:
         ansible_connection: ssh
-        ansible_python_interpreter: auto_silent
