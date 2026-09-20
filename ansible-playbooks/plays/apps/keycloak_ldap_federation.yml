@@ -60,6 +60,12 @@
           # present on every user entry via the ipaobject class.
           uuidLDAPAttribute: ipaUniqueID
           userObjectClasses: "inetOrgPerson, organizationalPerson"
+          # Excludes the svc-*-bind service accounts (roles/freeipa's own
+          # LDAP bind accounts, including this provider's own bindDn
+          # below) from ending up as regular, login-capable Keycloak
+          # users just because they live in the same cn=users container
+          # as real people.
+          customUserSearchFilter: "(!(uid=svc-*))"
           connectionUrl: "ldaps://freeipa.{{ base_domain }}:636"
           usersDn: "cn=users,cn=accounts,{{ freeipa_basedn }}"
           authType: simple
