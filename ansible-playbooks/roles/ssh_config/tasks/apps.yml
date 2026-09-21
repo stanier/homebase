@@ -1,0 +1,18 @@
+---
+# appdeploy apps aren't inventory hosts (they're CI-pushed to app-host,
+# see roles/appdeploy), so main.yml's groups['all'] loop can't discover
+# them -- appdeploy_ssh_apps (group_vars) is a hand-maintained list of
+# the ssh-type ones instead. Connects to app-proxy's app_ip (not
+# ansible_host, which is its management_ip -- see hosts.ini) since
+# that's the address that actually serves the real :443 layer4 listens
+# on, same address any other client of these apps would use.
+- name: Generate SSH config entries for appdeploy ssh-type apps
+  ansible.builtin.template:
+    src: ssh_config_apps.j2
+    dest: "{{ ssh_config_dir }}/homebase-ssh-apps-{{ ssh_config_env }}.conf"
+    mode: "0600"
+  delegate_to: localhost
+  connection: local
+  become: false
+  run_once: true
+  when: appdeploy_ssh_apps | length > 0

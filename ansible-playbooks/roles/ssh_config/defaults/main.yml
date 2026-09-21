@@ -9,3 +9,10 @@ ssh_config_main: "~/.ssh/config"
 # both environments' entries can coexist without Host-alias collisions
 # -- see templates/ssh_config.j2.
 ssh_config_env: "{{ inventory_dir | basename }}"
+
+# appdeploy apps are CI-pushed, not inventory hosts, so they can't be
+# discovered from `groups['all']` the way tasks/main.yml discovers
+# everything else here -- hand-maintain the ssh-type ones per
+# environment (group_vars/all/vars.yml) to get a clean `ssh
+# <app>.ssh.<env>` alias for each. See tasks/apps.yml.
+appdeploy_ssh_apps: []

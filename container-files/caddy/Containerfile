@@ -1,3 +1,10 @@
+FROM docker.io/library/caddy:2-builder AS build
+RUN xcaddy build \
+    --with github.com/mholt/caddy-l4 \
+    --with github.com/mholt/caddy-l4/modules/l4tls \
+    --with github.com/mholt/caddy-l4/modules/l4proxy
+
 FROM docker.io/library/caddy:2-alpine
+COPY --from=build /usr/bin/caddy /usr/bin/caddy
 
 COPY data/Caddyfile /etc/caddy/Caddyfile

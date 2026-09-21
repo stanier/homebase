@@ -96,6 +96,9 @@
   become: false
   run_once: true
 
+- name: Generate SSH config entries for appdeploy ssh-type apps
+  ansible.builtin.include_tasks: apps.yml
+
 # Include must come before any conflicting Host block for its entries
 # to take priority (ssh_config uses first-match-wins), hence BOF --
 # harmless if the user's own config never defines the same aliases.

@@ -8,15 +8,17 @@
 set -euo pipefail
 
 CADDY_APPS_DIR="{{ containers_home }}/appdeploy-state/caddy-apps"
+SSH_APPS_DIR="{{ containers_home }}/appdeploy-state/ssh-apps"
 DOMAIN_SUFFIX="{{ appdeploy_domain_suffix }}"
 
 # shellcheck disable=SC2206
 args=(${SSH_ORIGINAL_COMMAND:-})
 app="${args[0]:-}"
 port="${args[1]:-}"
+app_type="${args[2]:-http}"
 
 if [[ -z "$app" || -z "$port" ]]; then
-  echo "usage: <app> <port>" >&2
+  echo "usage: <app> <port> [http|ssh]" >&2
   exit 1
 fi
 if [[ ! "$app" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
@@ -25,6 +27,10 @@ if [[ ! "$app" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
 fi
 if [[ ! "$port" =~ ^[0-9]+$ ]]; then
   echo "invalid port: $port" >&2
+  exit 1
+fi
+if [[ "$app_type" != "http" && "$app_type" != "ssh" ]]; then
+  echo "invalid app type: $app_type (want http or ssh)" >&2
   exit 1
 fi
 
@@ -38,21 +44,58 @@ if [[ -z "$app_host" ]]; then
   exit 1
 fi
 
-# acme_tls is the snippet defined once at the top of caddy/data/Caddyfile
-# -- gets this app's cert from the shared internal ACME server (HTTP-01,
-# same as every other non-wildcard vhost there) instead of a per-instance
-# self-signed tls internal cert, so it's already trusted by anything that
-# trusts that one root, no separate import needed as apps come and go.
-cat > "$CADDY_APPS_DIR/$app.caddy" <<EOF
+if [[ "$app_type" == "ssh" ]]; then
+  hostname="$app.ssh.$DOMAIN_SUFFIX"
+
+  # Exists only so Caddy's automatic HTTPS obtains/holds a cert for
+  # this hostname -- the layer4 tls handler in the Caddyfile's layer4
+  # block reuses it from Caddy's own cert store rather than managing
+  # certs itself (caddy-l4 is explicit about this: it does no cert
+  # management of its own). Real SSH traffic never hits this vhost.
+  cat > "$CADDY_APPS_DIR/$app.caddy" <<EOF
+$hostname {
+	import acme_tls
+	respond "this is an ssh app; connect with ssh, not https" 400
+}
+EOF
+
+  # Imported by the layer4 block (see container-files/caddy's
+  # Caddyfile) -- matches this app's SNI, terminates the TLS the client
+  # wrapped its SSH connection in, and forwards the now-plain SSH bytes
+  # to the app's real container port.
+  cat > "$SSH_APPS_DIR/$app.caddyroute" <<EOF
+@$app tls sni $hostname
+route @$app {
+	tls
+	proxy $app_host:$port
+}
+EOF
+else
+  # acme_tls is the snippet defined once at the top of caddy/data/Caddyfile
+  # -- gets this app's cert from the shared internal ACME server (HTTP-01,
+  # same as every other non-wildcard vhost there) instead of a per-instance
+  # self-signed tls internal cert, so it's already trusted by anything that
+  # trusts that one root, no separate import needed as apps come and go.
+  cat > "$CADDY_APPS_DIR/$app.caddy" <<EOF
 $app.$DOMAIN_SUFFIX {
 	import acme_tls
 	reverse_proxy $app_host:$port
 }
 EOF
+  # An app that started out as ssh-type and later switched to http (or
+  # vice versa) shouldn't leave a stale route/vhost of the old type
+  # behind -- both writes above are keyed by $app, so removing the
+  # other type's leftover file keeps re-deploys idempotent.
+  rm -f "$SSH_APPS_DIR/$app.caddyroute"
+fi
 
 # systemd-caddy, not caddy -- caddy.container sets no ContainerName=, and
 # no unit in this repo does, so Quadlet's default naming (systemd-<unit
 # name>) applies uniformly.
 podman exec systemd-caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 
-echo "routed $app.$DOMAIN_SUFFIX -> $app_host:$port"
+if [[ "$app_type" == "ssh" ]]; then
+  echo "routed $app.ssh.$DOMAIN_SUFFIX (TLS-wrapped SSH) -> $app_host:$port"
+else
+  echo "routed $app.$DOMAIN_SUFFIX -> $app_host:$port"
+fi

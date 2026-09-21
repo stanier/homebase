@@ -38,9 +38,10 @@ args=(${SSH_ORIGINAL_COMMAND:-})
 app="${args[0]:-}"
 tag="${args[1]:-}"
 container_port="${args[2]:-}"
+app_type="${args[3]:-http}"
 
 if [[ -z "$app" || -z "$tag" || -z "$container_port" ]]; then
-  echo "usage: <app> <tag> <container-port>  (build context tar.gz piped on stdin)" >&2
+  echo "usage: <app> <tag> <container-port> [http|ssh]  (build context tar.gz piped on stdin)" >&2
   exit 1
 fi
 
@@ -58,6 +59,10 @@ if [[ ! "$tag" =~ ^[a-zA-Z0-9._-]+$ ]]; then
 fi
 if [[ ! "$container_port" =~ ^[0-9]+$ ]]; then
   echo "invalid container port: $container_port" >&2
+  exit 1
+fi
+if [[ "$app_type" != "http" && "$app_type" != "ssh" ]]; then
+  echo "invalid app type: $app_type (want http or ssh)" >&2
   exit 1
 fi
 
@@ -111,10 +116,14 @@ fi
 
 # Caddy lives on its own host, not here or on container-sandbox -- this
 # host only runs app containers (see roles/appdeploy_caddy on the other
-# end). $app/$port were
+# end). $app/$port/$app_type were
 # already validated above; this key can only ever run caddy-route.sh
 # there regardless of what's sent, same as this script itself is the only
 # thing the CI key can ever reach.
-ssh -i "$CADDY_ROUTE_KEY" -o BatchMode=yes "containers@$CADDY_ROUTE_HOST" "$app" "$port"
+ssh -i "$CADDY_ROUTE_KEY" -o BatchMode=yes "containers@$CADDY_ROUTE_HOST" "$app" "$port" "$app_type"
 
-echo "deployed $app:$tag -> https://$app.$DOMAIN_SUFFIX ({{ ansible_default_ipv4.address }}:$port)"
+if [[ "$app_type" == "ssh" ]]; then
+  echo "deployed $app:$tag -> ssh $app.ssh.$DOMAIN_SUFFIX ({{ ansible_default_ipv4.address }}:$port)"
+else
+  echo "deployed $app:$tag -> https://$app.$DOMAIN_SUFFIX ({{ ansible_default_ipv4.address }}:$port)"
+fi

@@ -1,0 +1,11 @@
+# Managed by ansible-playbooks (roles/ssh_config) -- do not edit by
+# hand, this file is overwritten on every run of
+# plays/system/ssh_config.yml. One Host block per appdeploy_ssh_apps
+# entry (group_vars/all/vars.yml), wrapping the SSH connection in TLS
+# so Caddy's layer4 app on app-proxy can route it by SNI -- see
+# roles/appdeploy_caddy/templates/caddy-route.sh.j2 for the server side.
+{% for app in appdeploy_ssh_apps %}
+
+Host {{ app }}.ssh.{{ ssh_config_env }}
+    ProxyCommand openssl s_client -quiet -connect {{ hostvars['app-proxy'].app_ip }}:443 -servername {{ app }}.ssh.apps.{{ base_domain }} 2>/dev/null
+{% endfor %}
