@@ -1,0 +1,96 @@
+---
+# No hosted .repo file to get_url the way roles/tailscale does --
+# Wazuh's packages.wazuh.com only serves the raw repo path, not a
+# ready-made .repo file -- so this is the one role in this repo using
+# ansible.builtin.rpm_key/yum_repository directly instead.
+- name: Import Wazuh GPG key
+  ansible.builtin.rpm_key:
+    key: https://packages.wazuh.com/key/GPG-KEY-WAZUH
+    state: present
+  when: wazuh_agent_enabled
+
+- name: Add Wazuh repo (RHEL-family)
+  ansible.builtin.yum_repository:
+    name: wazuh
+    description: EL-$releasever - Wazuh
+    baseurl: https://packages.wazuh.com/4.x/yum/
+    gpgcheck: true
+    gpgkey: https://packages.wazuh.com/key/GPG-KEY-WAZUH
+    priority: 1
+  when:
+    - wazuh_agent_enabled
+    - ansible_facts['os_family'] == 'RedHat'
+
+# The RPM's %post script does the actual enrollment against authd
+# (port 1515) using these env vars -- unlike roles/tailscale's
+# install-then-join two-step, there's no separate "check status, then
+# enroll" needed: enrollment happens once, at install time, and
+# re-running this against an already-installed package is a no-op (the
+# %post script doesn't re-run), so nothing re-enrolls on every play run.
+- name: Install and enroll wazuh-agent
+  ansible.builtin.package:
+    name: wazuh-agent
+    state: present
+  environment:
+    WAZUH_MANAGER: "{{ wazuh_manager_host }}"
+    WAZUH_REGISTRATION_SERVER: "{{ wazuh_manager_host }}"
+    WAZUH_REGISTRATION_PASSWORD: "{{ wazuh_registration_password }}"
+  no_log: true
+  when: wazuh_agent_enabled
+
+# Present in neither the RPM nor the container image's default
+# ossec.conf (confirmed by extracting wazuh/wazuh-agent:4.14.7's own
+# copy -- no audit stanza at all, commented or otherwise), so this
+# appends a block rather than uncommenting one. Wazuh's XML parser
+# accepts multiple concatenated <ossec_config> roots in one file (the
+# manager's own stock ossec.conf ends the same way, for its
+# active-response logging) -- appending is enough, no need to touch or
+# understand the rest of the file.
+- name: Enable audit-log monitoring (feeds roles/auditd's output into Wazuh)
+  ansible.builtin.blockinfile:
+    path: /var/ossec/etc/ossec.conf
+    marker: "<!-- {mark} ANSIBLE MANAGED BLOCK (roles/wazuh_agent) -->"
+    insertafter: EOF
+    block: |
+      <ossec_config>
+        <localfile>
+          <log_format>audit</log_format>
+          <location>/var/log/audit/audit.log</location>
+        </localfile>
+      </ossec_config>
+  notify: restart wazuh-agent
+  when: wazuh_agent_enabled
+
+- name: Ensure wazuh-agent is enabled and running
+  ansible.builtin.systemd:
+    name: wazuh-agent
+    state: started
+    enabled: true
+  when: wazuh_agent_enabled
+
+# Teardown mirrors roles/logging/roles/auditd: leave the package
+# installed (removing it doesn't un-enroll it from the manager anyway,
+# and reinstalling later would just re-run the same idempotent enroll
+# step), just stop the service and drop the audit-log stanza.
+- name: Check whether wazuh-agent was ever installed
+  ansible.builtin.stat:
+    path: /var/ossec/etc/ossec.conf
+  register: wazuh_agent_ossec_conf
+  when: not wazuh_agent_enabled
+
+- name: Remove audit-log monitoring block when disabled
+  ansible.builtin.blockinfile:
+    path: /var/ossec/etc/ossec.conf
+    marker: "<!-- {mark} ANSIBLE MANAGED BLOCK (roles/wazuh_agent) -->"
+    state: absent
+  when:
+    - not wazuh_agent_enabled
+    - wazuh_agent_ossec_conf.stat.exists
+
+- name: Stop and disable wazuh-agent when disabled
+  ansible.builtin.systemd:
+    name: wazuh-agent
+    state: stopped
+    enabled: false
+  when: not wazuh_agent_enabled
+  failed_when: false

@@ -1,0 +1,54 @@
+[Unit]
+Description=Wazuh manager
+After=network-online.target wazuh-indexer.service
+Wants=network-online.target
+Requires=wazuh-indexer.service
+
+[Container]
+Image=docker.io/wazuh/wazuh-manager:4.14.7
+Network=wazuh.network
+NetworkAlias=wazuh-manager
+# Agents connect cross-host, so these need to be reachable on the host
+# itself, not just inside wazuh.network -- same reasoning as
+# loki/victoriametrics publishing ports while still using a bridge
+# network. Open 1514/1515 tcp (and 514/udp if syslog-format agentless
+# sources are ever added) via roles/firewall's per-host firewall_rules.
+PublishPort=1514:1514/tcp
+PublishPort=1515:1515/tcp
+PublishPort=55000:55000/tcp
+Environment=INDEXER_URL=https://wazuh-indexer:9200
+Environment=FILEBEAT_SSL_VERIFICATION_MODE=full
+Environment=SSL_CERTIFICATE_AUTHORITIES=/etc/ssl/root-ca.pem
+Environment=SSL_CERTIFICATE=/etc/ssl/filebeat.pem
+Environment=SSL_KEY=/etc/ssl/filebeat.key
+EnvironmentFile=/srv/containers/container-files/wazuh/.env
+Volume=wazuh_wazuh_manager_api_configuration:/var/ossec/api/configuration
+Volume=wazuh_wazuh_manager_etc:/var/ossec/etc
+Volume=wazuh_wazuh_manager_logs:/var/ossec/logs
+Volume=wazuh_wazuh_manager_queue:/var/ossec/queue
+Volume=wazuh_wazuh_manager_var_multigroups:/var/ossec/var/multigroups
+Volume=wazuh_wazuh_manager_integrations:/var/ossec/integrations
+Volume=wazuh_wazuh_manager_active_response:/var/ossec/active-response/bin
+Volume=wazuh_wazuh_manager_agentless:/var/ossec/agentless
+Volume=wazuh_wazuh_manager_wodles:/var/ossec/wodles
+Volume=wazuh_wazuh_manager_filebeat_etc:/etc/filebeat
+Volume=wazuh_wazuh_manager_filebeat_var:/var/lib/filebeat
+Volume=/srv/containers/container-files/wazuh/data/wazuh_manager/wazuh_manager.conf:/wazuh-config-mount/etc/ossec.conf:ro,z
+# certs/ and authd.pass are containerapps_secret_files, not tracked here
+# -- see ansible-playbooks/docs/VAULT.md's Wazuh section.
+Volume=/srv/containers/container-files/wazuh/data/wazuh_manager/certs/root-ca-manager.pem:/etc/ssl/root-ca.pem:ro,z
+Volume=/srv/containers/container-files/wazuh/data/wazuh_manager/certs/wazuh.manager.pem:/etc/ssl/filebeat.pem:ro,z
+Volume=/srv/containers/container-files/wazuh/data/wazuh_manager/certs/wazuh.manager-key.pem:/etc/ssl/filebeat.key:ro,z
+Volume=/srv/containers/container-files/wazuh/data/wazuh_manager/authd.pass:/var/ossec/etc/authd.pass:ro,z
+PodmanArgs=--memory=1g
+HealthCmd=bash -c 'exec 3<>/dev/tcp/127.0.0.1/1515 && exec 3<&-'
+HealthInterval=30s
+HealthTimeout=5s
+HealthStartPeriod=60s
+HealthRetries=5
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

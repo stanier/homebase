@@ -1,0 +1,25 @@
+# Managed by container-files/wazuh. No default ships inside
+# wazuh/wazuh-dashboard:4.14.7 (confirmed -- `config/` only has a
+# certs/ subdir, no opensearch_dashboards.yml to copy from), so this is
+# hand-written from documented OpenSearch Dashboards + Wazuh plugin
+# settings rather than a patched stock file. Verify against the
+# running container's actual startup logs in testzone before trusting
+# this blindly (see the plan's Verification section).
+#
+# Deliberately does NOT set opensearch.username/opensearch.password:
+# the image's entrypoint.sh stores DASHBOARD_USERNAME/DASHBOARD_PASSWORD
+# (see wazuh/.env) into the OpenSearch-Dashboards keystore instead, and
+# those keystore values are picked up automatically when these yaml
+# keys are absent -- setting them here would just shadow the keystore
+# with the wrong (demo) value.
+server.host: "0.0.0.0"
+server.port: 5601
+server.ssl.enabled: true
+server.ssl.certificate: /usr/share/wazuh-dashboard/config/certs/dashboard.pem
+server.ssl.key: /usr/share/wazuh-dashboard/config/certs/dashboard-key.pem
+opensearch.hosts: ["https://wazuh-indexer:9200"]
+opensearch.ssl.certificateAuthorities: ["/usr/share/wazuh-dashboard/config/certs/root-ca.pem"]
+opensearch.ssl.verificationMode: certificate
+opensearch.requestHeadersWhitelist: ["securitytenant", "Authorization"]
+opensearch_security.multitenancy.enabled: false
+uiSettings.overrides.defaultRoute: /app/wz-home

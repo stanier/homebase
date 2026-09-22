@@ -45,6 +45,7 @@ following the conventions described in `docs/`.
 | `freeipa_client` | Enrolls a `[vm]` host as a FreeIPA/SSSD client for IPA-backed interactive SSH login |
 | `logging` | Central logging setup |
 | `auditd` | Kernel-level audit trail (identity/auth/sudo/sshd config watches) via `auditd` |
+| `wazuh_agent` | Installs and enrolls the Wazuh HIDS agent (`../container-files/wazuh` is the manager side) |
 | `node_exporter` / `podman_exporter` | Prometheus exporters for non-container-managed hosts |
 | `tailscale` | Tailscale enrollment |
 | `ssh_config` | Generates `~/.ssh/config.d/homebase-<env>.conf` Host entries from inventory (operator's machine, not fleet infra) |

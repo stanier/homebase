@@ -1,0 +1,17 @@
+---
+wazuh_agent_enabled: true
+
+# Manager/enrollment server address -- the host running
+# container-files/wazuh's wazuh-manager.container, reachable on 1514
+# (event data) and 1515 (enrollment/authd). Not a secret, but has no
+# sane repo-wide default since it's environment-specific -- set in
+# group_vars/all/vars.yml once the manager host is chosen.
+wazuh_manager_host: ""
+
+# Shared enrollment secret agents authenticate with against authd.
+# Source from vault_wazuh_registration_password in
+# group_vars/all/vault.yml -- see docs/VAULT.md. Must match the
+# password baked into the manager's authd.pass
+# (container-files/wazuh/data/wazuh_manager/authd.pass, delivered via
+# containerapps_secret_files).
+wazuh_registration_password: ""

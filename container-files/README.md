@@ -44,6 +44,7 @@ A host only runs the services listed for it in
 | `caddy` | Reverse proxy / TLS termination for every public vhost, using a private offline CA |
 | `dns` (BIND) | Authoritative DNS, RFC2136 dynamic updates for ACME DNS-01 |
 | `adguardhome` | Recursive DNS + ad/tracker blocking |
+| `alertmanager` | Alert routing/notification (pairs with `victoriametrics`/`grafana`) |
 | `authentik` | SSO / identity provider (server + worker + Postgres + Redis) |
 | `keycloak` | SSO / identity provider (server + Postgres) |
 | `gitea` | Git hosting |
@@ -54,9 +55,16 @@ A host only runs the services listed for it in
 | `influxdb` | Time-series metrics store |
 | `victoriametrics` | Time-series metrics store (Prometheus-remote-write compatible) |
 | `loki` + `promtail` | Log aggregation + shipping |
+| `minio` | Self-hosted S3-compatible object storage |
 | `syslog` | Central rsyslog receiver for the fleet |
 | `node-exporter` / `podman-exporter` | Prometheus metrics exporters (host / podman) |
+| `uptime-kuma` | External-facing uptime/status monitoring |
+| `wazuh` | Endpoint security (HIDS): manager + indexer + dashboard (agents installed by `ansible-playbooks/roles/wazuh_agent`) |
+| `vaultwarden` | Self-hosted Bitwarden-compatible password manager |
 | `windows` | A full Windows VM-in-a-container (`dockur/windows`), for one-off Windows-only needs |
+
+See [`docs/roadmap.md`](docs/roadmap.md) for services planned but not
+yet added.
 
 ## Networking conventions
 
@@ -67,7 +75,10 @@ A host only runs the services listed for it in
 - `authentik` and `keycloak` are the exceptions: each has its own
   dedicated Quadlet network (`authentik.network` / `keycloak.network`)
   so its containers can address each other by `NetworkAlias` without
-  publishing internal ports.
+  publishing internal ports. `wazuh` follows the same pattern
+  (`wazuh.network`) for its manager/indexer/dashboard, while still
+  publishing the manager's agent-facing ports (1514/1515) since agents
+  connect cross-host.
 - Named volumes (`Volume=<service>_<name>:/path`) are Podman-managed and
   host-local; bind mounts under `/srv/containers/container-files/...`
   come from this repo's sync. A few services (`gitea`'s
