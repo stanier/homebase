@@ -5,9 +5,7 @@ Wants=network-online.target
 
 [Container]
 Image=dns.build
-PublishPort=15353:15353/udp
-PublishPort=15353:15353/tcp
-Sysctl=net.ipv4.ip_unprivileged_port_start=53
+Network=host
 Volume=/srv/containers/container-files/dns/data/zones:/etc/bind/zones:z
 Volume=/srv/containers/container-files/dns/data/named.conf:/etc/bind/named.conf:ro,z
 Volume=/srv/containers/container-files/dns/data/keys:/etc/bind/keys:ro,z

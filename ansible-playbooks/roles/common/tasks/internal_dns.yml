@@ -8,10 +8,10 @@
   # this VM's own OS resolver directly, not a container-scoped one) can
   # obtain certs for gitea/grafana/etc. by IP but fails resolving a
   # brand-new *.apps.{{ base_domain }} hostname for its internal ACME
-  # request. AdGuardHome (container-sandbox) already forwards
-  # non-internal queries upstream itself (see its own
-  # containerapps_secret_files config), so pointing here at just that
-  # one server covers both internal and external resolution correctly.
+  # request. AdGuardHome (dnsguard) already forwards non-internal
+  # queries upstream itself (see its own containerapps_secret_files
+  # config), so pointing here at just that one server covers both
+  # internal and external resolution correctly.
   #
   # "cloud-init eth0" matches cloud-init's deterministic per-interface
   # connection naming and this fleet's convention that eth0 is always
@@ -21,18 +21,18 @@
   #
   # 9.9.9.9 (Quad9) is listed second as a bootstrap fallback: this task
   # runs during onboarding/baseline_packages, well before apps/podman.yml
-  # actually deploys AdGuardHome onto container-sandbox, so every VM
-  # (including container-sandbox itself) would otherwise have no working
-  # resolver -- and thus no dnf/EPEL/mirror access -- for everything that
-  # runs in between. glibc's resolver only falls through to the second
+  # actually deploys AdGuardHome onto dnsguard, so every VM (including
+  # dnsguard itself) would otherwise have no working resolver -- and
+  # thus no dnf/EPEL/mirror access -- for everything that runs in
+  # between. glibc's resolver only falls through to the second
   # nameserver once the first fails to answer, so once AdGuardHome is up
-  # container-sandbox's app_ip continues to be used for both internal and
+  # dnsguard's app_ip continues to be used for both internal and
   # external lookups as before.
   community.general.nmcli:
     conn_name: "cloud-init eth0"
     type: ethernet
     dns4:
-      - "{{ hostvars['container-sandbox'].app_ip }}"
+      - "{{ hostvars['dnsguard'].app_ip }}"
       - "9.9.9.9"
     dns4_ignore_auto: true
     state: present
