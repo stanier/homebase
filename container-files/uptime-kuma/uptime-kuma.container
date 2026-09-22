@@ -1,0 +1,20 @@
+[Unit]
+Description=Uptime Kuma
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/louislam/uptime-kuma:2.5.5
+PublishPort=3001:3001
+Volume=uptime-kuma_uptime_kuma_data:/app/data
+HealthCmd=wget -q --spider http://127.0.0.1:3001/
+HealthInterval=30s
+HealthTimeout=5s
+HealthStartPeriod=30s
+HealthRetries=3
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

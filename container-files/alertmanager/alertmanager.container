@@ -1,0 +1,22 @@
+[Unit]
+Description=Alertmanager
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/prom/alertmanager:v0.34.1
+PublishPort=9093:9093
+Volume=/srv/containers/container-files/alertmanager/data/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro,z
+Volume=alertmanager_alertmanager_data:/alertmanager
+Exec=--config.file=/etc/alertmanager/alertmanager.yml --storage.path=/alertmanager
+HealthCmd=wget -q --spider http://127.0.0.1:9093/-/healthy
+HealthInterval=30s
+HealthTimeout=5s
+HealthStartPeriod=15s
+HealthRetries=3
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

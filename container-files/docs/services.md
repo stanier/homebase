@@ -5,6 +5,7 @@
 | `caddy` | Reverse proxy / TLS termination for every public vhost, using a private offline CA |
 | `dns` (BIND) | Authoritative DNS, RFC2136 dynamic updates for ACME DNS-01 |
 | `adguardhome` | Recursive DNS + ad/tracker blocking; also the resolver every VM's app-network DNS points at |
+| `alertmanager` | Alert routing/notification (pairs with `victoriametrics`/`grafana`) |
 | `authentik` | SSO / identity provider (server + worker + Postgres + Redis) |
 | `gitea` | Git hosting |
 | `gitea-runner` | Gitea Actions CI runner (`act_runner`) |
@@ -14,8 +15,11 @@
 | `influxdb` | Time-series metrics store |
 | `victoriametrics` | Time-series metrics store (Prometheus-remote-write compatible) |
 | `loki` + `promtail` | Log aggregation + shipping |
+| `minio` | Self-hosted S3-compatible object storage |
 | `syslog` | Central rsyslog receiver for the fleet |
 | `node-exporter` / `podman-exporter` | Prometheus metrics exporters (host / podman) |
+| `uptime-kuma` | External-facing uptime/status monitoring |
+| `vaultwarden` | Self-hosted Bitwarden-compatible password manager |
 | `windows` | A full Windows VM-in-a-container (`dockur/windows`), for one-off Windows-only needs |
 
 ## Adding a service

@@ -1,0 +1,22 @@
+[Unit]
+Description=Vaultwarden
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/vaultwarden/server:1.37.3-alpine
+Environment=SIGNUPS_ALLOWED=false
+EnvironmentFile=/srv/containers/container-files/vaultwarden/.env
+PublishPort=8082:80
+Volume=vaultwarden_vaultwarden_data:/data
+HealthCmd=wget -q --spider http://127.0.0.1:80/alive
+HealthInterval=30s
+HealthTimeout=5s
+HealthStartPeriod=15s
+HealthRetries=3
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
