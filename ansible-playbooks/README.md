@@ -42,6 +42,7 @@ following the conventions described in `docs/`.
 | `backup` | Daily restic backups of container volumes/bind-mounts, per host |
 | `mail_server` / `postfix` | Native (non-containerized) mail stack, pairs with `container-files/dovecot` + `roundcube` |
 | `freeipa` | Native (non-containerized) FreeIPA install -- directory/Kerberos source of truth, DNS deliberately left to AdGuardHome/bind |
+| `freeipa_client` | Enrolls a `[vm]` host as a FreeIPA/SSSD client for IPA-backed interactive SSH login |
 | `logging` | Central logging setup |
 | `node_exporter` / `podman_exporter` | Prometheus exporters for non-container-managed hosts |
 | `tailscale` | Tailscale enrollment |
@@ -78,7 +79,9 @@ digging into role source:
 
 - [`docs/Typical_Procedure.md`](docs/Typical_Procedure.md) — creating a
   new VM (Tofu-first, with the legacy Ansible-only path as fallback), VM
-  maintenance/snapshots, restoring a container host after a wipe.
+  maintenance/snapshots, restoring a container host after a wipe, moving
+  FreeIPA users between environments/sites, FreeIPA-backed personal SSH
+  access.
 - [`docs/VAULT.md`](docs/VAULT.md) — Ansible Vault conventions, every
   secret in the fleet and where it's consumed, the `automation` service
   account.

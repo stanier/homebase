@@ -197,3 +197,112 @@ List what's actually in a host's repo, or restore just one snapshot,
 with `restic -r <repo> snapshots` / `restic -r <repo> restore <snapshot-id> ...`.
 `app-host`'s CI-deployed apps aren't covered by this -- see
 `roles/backup`'s own notes on why that's out of scope for now.
+
+## Moving FreeIPA users between environments/sites
+
+`plays/apps/freeipa_export_users.yml` / `freeipa_import_users.yml` make
+FreeIPA user accounts (identity attributes, SSH keys, group
+memberships) portable between separate FreeIPA installations -- two
+environments here, or a completely different site's realm. This is
+**not** replication -- there's no ongoing sync, and Kerberos
+keys/passwords never cross environments (they can't: a Kerberos key is
+derived from a realm-specific master key the API never exposes). Each
+imported account gets a one-time password that must be changed at next
+login, same as any freshly `ipa user-add`'d account.
+
+Export from the source environment:
+
+```
+ansible-playbook --ask-vault-pass -i inventory/<source-env> \
+  plays/apps/freeipa_export_users.yml \
+  -e freeipa_export_file=/path/to/users.json
+```
+
+Import into the target environment:
+
+```
+ansible-playbook --ask-vault-pass -i inventory/<target-env> \
+  plays/apps/freeipa_import_users.yml \
+  -e freeipa_import_file=/path/to/users.json \
+  -e freeipa_import_password="$(openssl rand -base64 18)"
+```
+
+Both are idempotent and safe to re-run -- re-importing the same file
+just confirms nothing changed. Read the comments at the top of each
+play before using it; they cover exactly what does and doesn't survive
+the trip (no uidnumber/gidnumber either, since two sites' ID ranges may
+already overlap) and why. The export file itself contains real
+names/emails/SSH keys -- handle it like any other PII, not like
+something safe to commit (`inventory/` -- its default destination -- is
+already entirely gitignored for this reason, same as everything else
+under it).
+
+## FreeIPA-backed SSH access (Plan 4)
+
+Gives personal FreeIPA accounts real interactive SSH + sudo access
+across the fleet, instead of relying on the shared `automation` service
+account (roles/common) for human logins too. `automation` itself is
+untouched by any of this -- it stays outside IPA entirely, so a
+FreeIPA outage never blocks Ansible-driven provisioning or recovery.
+
+Three moving pieces, in order:
+
+1. **`plays/apps/freeipa.yml`** already widens FreeIPA's own firewall
+   (`host_vars/freeipa.yml`) to accept LDAP/Kerberos from the whole app
+   network, not just authentik/keycloak -- every enrolled client needs
+   this reachable, not just Plan 3's two consumers.
+2. **`plays/apps/freeipa_client.yml`** (`roles/freeipa_client`) enrolls
+   every `[vm]` host except `freeipa` itself as an IPA client:
+   `ipa-client-install`, SSSD, and an sshd drop-in
+   (`AuthorizedKeysCommand sss_ssh_authorizedkeys`,
+   `PasswordAuthentication no`) so an IPA user's `ipasshpubkey`
+   attribute becomes a live login key with no per-host key
+   distribution. `[proxmox]` hosts (turkey/homelab) are deliberately
+   excluded -- see that play's own header comment for why.
+
+   This also sets each enrolled host's OS hostname to its FQDN --
+   `ipa-client-install` refuses a short hostname outright, same
+   requirement `roles/freeipa` already has to satisfy for the server
+   itself. `roles/common/tasks/set_hostname.yml` (applied fleet-wide by
+   `plays/system/update.yml`/`baseline_packages.yml`, both
+   `hosts: all`) unconditionally resets every host back to its short
+   `inventory_hostname` though, so a routine update run will silently
+   un-FQDN an enrolled client again. `roles/freeipa_client`'s hostname
+   task isn't gated on first-enrollment, so it self-heals -- if SSSD/
+   Kerberos starts misbehaving on a host after a fleet-wide update,
+   re-run `freeipa_client.yml` before looking anywhere else.
+3. **`plays/apps/freeipa_ssh_access.yml`** configures the actual
+   HBAC/sudo policy against the freeipa server: creates each personal
+   account from `freeipa_admin_users` (`host_vars/freeipa.yml`), a
+   shared `fleet-admins` user group, two hostgroups tiered by blast
+   radius (`freeipa-server` vs `fleet-vms`), disables FreeIPA's default
+   allow-everyone-everywhere HBAC rule, and grants `fleet-admins` SSH
+   (HBAC) plus `ALL` sudo with a password required -- no NOPASSWD, so a
+   leaked/stolen SSH key alone isn't instant root everywhere. Depends
+   on step 2 having already enrolled the hosts it references (IPA
+   host objects only exist post-enrollment); re-run it any time a new
+   host is enrolled.
+
+```
+ansible-playbook --ask-vault-pass -i inventory/<env> plays/apps/freeipa.yml
+ansible-playbook --ask-vault-pass -i inventory/<env> plays/apps/freeipa_client.yml
+ansible-playbook --ask-vault-pass -i inventory/<env> plays/apps/freeipa_ssh_access.yml
+```
+
+Before the last step, add each admin user's password to the vault
+(`ansible-vault edit group_vars/all/vault.yml`, see `docs/VAULT.md`):
+
+```yaml
+vault_freeipa_keyton_password: "..."
+```
+
+...and reference it from `host_vars/freeipa.yml`'s `freeipa_admin_users`
+entry, same `vault_<name>` convention as everywhere else. It's a
+one-time bootstrap/reset password only -- FreeIPA forces a change at
+next login, same behavior `freeipa_import_users.yml`'s imported
+accounts get.
+
+Read `roles/freeipa_client/tasks/main.yml` and
+`plays/apps/freeipa_ssh_access.yml`'s own comments before running
+either -- they cover the exact HBAC/sudo shape and the reasoning behind
+each piece.

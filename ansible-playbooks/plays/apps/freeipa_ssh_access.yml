@@ -1,0 +1,170 @@
+# Plan 4: FreeIPA HBAC/sudo policy for interactive SSH access -- see
+# docs/Typical_Procedure.md's "FreeIPA-backed SSH access" section for
+# the policy this encodes. Deliberately separate from
+# plays/apps/freeipa.yml/freeipa_client.yml (same reasoning as
+# plays/apps/keycloak_ldap_federation.yml being its own play): this
+# depends on hosts already being IPA-enrolled, which is a different
+# play's job.
+#
+# Two hostgroups, tiered by blast radius:
+#   - freeipa-server: the freeipa host itself (highest blast radius --
+#     compromise it, compromise every identity)
+#   - fleet-vms: every other enrolled [vm] host
+# freeipa_admin_users all get both today (one shared policy), but the
+# tiering exists so a future, less-trusted account can be scoped to
+# fleet-vms only without restructuring anything.
+#
+# One shared user group (fleet-admins) gets:
+#   - HBAC: sshd on both hostgroups (replacing FreeIPA's own
+#     allow-everyone-everywhere default, which this play disables)
+#   - sudo: ALL commands, password required (no NOPASSWD -- unlike the
+#     automation service account, a human logging in interactively can
+#     type a password, and requiring one means a stolen/leaked SSH key
+#     alone isn't instant root everywhere)
+#
+# The automation service account (roles/common) is untouched by any of
+# this -- it stays outside IPA entirely, so a FreeIPA outage never
+# blocks Ansible-driven provisioning/recovery.
+#
+# Requires:
+#  - plays/apps/freeipa.yml to have run at least once
+#  - plays/apps/freeipa_client.yml to have already enrolled every [vm]
+#    host this targets -- ipa-client-install is what creates each
+#    host's IPA host object in the first place, and the fleet-vms
+#    hostgroup below can only add a host that object already exists
+#    for. Re-run this play any time a new host gets enrolled to pick it
+#    up (idempotent, safe to run repeatedly).
+#
+# Run against a specific environment:
+#
+#   ansible-playbook --ask-vault-pass -i inventory/<env> \
+#     plays/apps/freeipa_ssh_access.yml
+- name: Configure FreeIPA HBAC/sudo policy for interactive SSH access
+  hosts: freeipa
+  become: false
+  gather_facts: false
+
+  # freeipa_admin_users: personal accounts that should get fleet SSH +
+  # sudo access. sshpubkey is what actually makes an account able to
+  # log in (AuthorizedKeysCommand only ever serves keys IPA already
+  # has on file) -- password is just the Kerberos bootstrap/reset
+  # value, same "must change at next login" behavior as
+  # freeipa_import_users.yml's imported accounts. Set in
+  # host_vars/freeipa.yml, never commit real values here. Deliberately
+  # NOT given a play-level `vars:` default -- play vars take
+  # precedence over inventory host_vars in Ansible, so a `vars:`
+  # default here would silently override whatever host_vars/freeipa.yml
+  # sets, no matter what that file contains.
+
+  tasks:
+    - name: Require at least one admin user to be configured
+      ansible.builtin.assert:
+        that: freeipa_admin_users | default([]) | length > 0
+        fail_msg: >-
+          freeipa_admin_users is empty -- set it in host_vars/freeipa.yml
+          with uid/givenname/sn/sshpubkey/password fields per entry,
+          password referencing a vault_freeipa_<uid>_password (see
+          docs/VAULT.md for the vault_ convention to follow, and this
+          play's own header comment for the full shape).
+
+    - name: Require a non-empty password for every admin user
+      ansible.builtin.assert:
+        that: item.password | default('') | length > 0
+        fail_msg: >-
+          {{ item.uid }}'s password is empty -- add its
+          vault_freeipa_<uid>_password to group_vars/all/vault.yml
+          (`ansible-vault edit`, see docs/VAULT.md) before running this
+          play.
+      loop: "{{ freeipa_admin_users }}"
+      loop_control:
+        label: "{{ item.uid }}"
+      no_log: true
+
+    - name: Create/update each personal admin account
+      community.general.ipa_user:
+        name: "{{ item.uid }}"
+        givenname: "{{ item.givenname }}"
+        sn: "{{ item.sn }}"
+        sshpubkey: "{{ item.sshpubkey }}"
+        password: "{{ item.password }}"
+        update_password: on_create
+        ipa_host: "{{ inventory_hostname }}.{{ base_domain }}"
+        ipa_user: admin
+        ipa_pass: "{{ freeipa_admin_password }}"
+      loop: "{{ freeipa_admin_users }}"
+      loop_control:
+        label: "{{ item.uid }}"
+      no_log: true
+
+    - name: Create the fleet-admins user group
+      community.general.ipa_group:
+        name: fleet-admins
+        user: "{{ freeipa_admin_users | map(attribute='uid') | list }}"
+        append: false
+        ipa_host: "{{ inventory_hostname }}.{{ base_domain }}"
+        ipa_user: admin
+        ipa_pass: "{{ freeipa_admin_password }}"
+
+    - name: Create the freeipa-server hostgroup
+      community.general.ipa_hostgroup:
+        name: freeipa-server
+        host:
+          - "{{ inventory_hostname }}.{{ base_domain }}"
+        ipa_host: "{{ inventory_hostname }}.{{ base_domain }}"
+        ipa_user: admin
+        ipa_pass: "{{ freeipa_admin_password }}"
+
+    - name: Create the fleet-vms hostgroup
+      # Every enrolled [vm] host except freeipa itself (that's the
+      # freeipa-server hostgroup above) and freeipa_ssh_excluded_vms --
+      # an escape hatch for hosts that are [vm] members but not yet (or
+      # not currently) IPA-enrolled, since hostgroup_add_member fails
+      # outright on any host without an IPA host object rather than
+      # skipping it. Set in host_vars/freeipa.yml, e.g. while a host is
+      # offline or hasn't run freeipa_client.yml yet; drop the entry
+      # once plays/apps/freeipa_client.yml has enrolled it -- see this
+      # play's own header comment. default([]) here (not a play-level
+      # vars: default) so host_vars can actually override it -- see
+      # freeipa_admin_users' own comment above for why.
+      community.general.ipa_hostgroup:
+        name: fleet-vms
+        host: "{{ groups['vm'] | difference([inventory_hostname]) | difference(freeipa_ssh_excluded_vms | default([])) | map('regex_replace', '^(.*)$', '\\1.' + base_domain) | list }}"
+        ipa_host: "{{ inventory_hostname }}.{{ base_domain }}"
+        ipa_user: admin
+        ipa_pass: "{{ freeipa_admin_password }}"
+
+    - name: Disable FreeIPA's default allow-all HBAC rule
+      community.general.ipa_hbacrule:
+        name: allow_all
+        state: disabled
+        ipa_host: "{{ inventory_hostname }}.{{ base_domain }}"
+        ipa_user: admin
+        ipa_pass: "{{ freeipa_admin_password }}"
+
+    - name: Allow fleet-admins to SSH into the freeipa server and fleet VMs
+      community.general.ipa_hbacrule:
+        name: allow-fleet-admins-ssh
+        hostgroup:
+          - freeipa-server
+          - fleet-vms
+        usergroup:
+          - fleet-admins
+        service:
+          - sshd
+        ipa_host: "{{ inventory_hostname }}.{{ base_domain }}"
+        ipa_user: admin
+        ipa_pass: "{{ freeipa_admin_password }}"
+
+    - name: Allow fleet-admins to sudo (password required, no NOPASSWD)
+      community.general.ipa_sudorule:
+        name: allow-fleet-admins-sudo
+        hostgroup:
+          - freeipa-server
+          - fleet-vms
+        usergroup:
+          - fleet-admins
+        cmdcategory: all
+        runasusercategory: all
+        ipa_host: "{{ inventory_hostname }}.{{ base_domain }}"
+        ipa_user: admin
+        ipa_pass: "{{ freeipa_admin_password }}"

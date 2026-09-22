@@ -1,0 +1,119 @@
+# Exports FreeIPA user accounts -- identity attributes + group
+# memberships -- to a portable JSON file, for re-import into a
+# different FreeIPA installation (a different environment or site's own
+# realm) via freeipa_import_users.yml.
+#
+# Deliberately excludes anything that can't survive that trip:
+# Kerberos keys are derived from a realm-specific master key and are
+# never exposed by the IPA API at all (there is no "export the
+# password hash" option, unlike a plain Unix passwd/shadow file), and
+# uidnumber/gidnumber are left out too since two sites' ID ranges may
+# already overlap -- the target IPA just assigns its own on import,
+# same as any other freshly-created account. The attribute allow-list
+# below (freeipa_export_fields) is deliberate for the same reason: IPA's
+# "all" output also carries a pile of internal/operational attributes
+# (krb* Kerberos state, entryusn, nsaccountlock, memberofindirect_*,
+# ...) that are either meaningless outside the realm they came from or
+# actively wrong to copy across sites, so this whitelists the portable
+# subset instead of trying to enumerate everything to strip out.
+#
+# Talks to FreeIPA's own JSON-RPC API directly (ansible.builtin.uri)
+# rather than a CLI/Kerberos ticket dance -- there's no community.general
+# module for listing/searching users (ipa_user is create/modify/delete
+# only), so this hand-rolls the same login_password + session/json
+# calls that module_utils/_ipa.py makes under the hood for every other
+# ipa_* module in this repo. Runs on hosts: freeipa itself, same as
+# roles/freeipa's own bind-account task, so ipa_host resolves to the
+# server's own FQDN over loopback with no extra network hop.
+#
+# Run against a specific environment's freeipa host:
+#
+#   ansible-playbook --ask-vault-pass -i inventory/<env> \
+#     plays/apps/freeipa_export_users.yml \
+#     -e freeipa_export_file=/path/to/users.json
+#
+# freeipa_export_file defaults under inventory_dir so a forgotten
+# override never lands the export inside a tracked path by accident --
+# inventory/ is entirely gitignored (see README.md). The export
+# contains real names/emails/SSH keys, so treat the resulting file like
+# any other piece of PII, not like something safe to commit.
+- name: Export FreeIPA user accounts to a portable file
+  hosts: freeipa
+  become: false
+  gather_facts: false
+
+  vars:
+    freeipa_export_file: "{{ inventory_dir }}/freeipa-users-export.json"
+    freeipa_export_fields:
+      - uid
+      - givenname
+      - sn
+      - cn
+      - mail
+      - title
+      - gecos
+      - homedirectory
+      - loginshell
+      - ipasshpubkey
+      - memberof_group
+
+  tasks:
+    - name: Log in to FreeIPA's JSON-RPC API as admin
+      ansible.builtin.uri:
+        url: "https://{{ inventory_hostname }}.{{ base_domain }}/ipa/session/login_password"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          user: admin
+          password: "{{ freeipa_admin_password }}"
+        headers:
+          Referer: "https://{{ inventory_hostname }}.{{ base_domain }}/ipa"
+        status_code: 200
+      register: freeipa_login
+      no_log: true
+
+    - name: Fetch every user account's full attribute set
+      # params: [[""], {...}] -- an empty search string plus "all"
+      # matches every user, same as running `ipa user-find` with no
+      # arguments. sizelimit: 0 lifts IPA's default 100-entry find cap.
+      ansible.builtin.uri:
+        url: "https://{{ inventory_hostname }}.{{ base_domain }}/ipa/session/json"
+        method: POST
+        headers:
+          Referer: "https://{{ inventory_hostname }}.{{ base_domain }}/ipa"
+          Content-Type: application/json
+          Accept: application/json
+          Cookie: "{{ freeipa_login.cookies_string }}"
+        body_format: json
+        body:
+          method: user_find
+          params:
+            - [""]
+            - all: true
+              sizelimit: 0
+        status_code: 200
+      register: freeipa_user_find
+
+    - name: Filter each user down to the portable attribute set
+      ansible.builtin.set_fact:
+        freeipa_export_users: "{{ freeipa_export_users | default([]) + [item | dict2items | selectattr('key', 'in', freeipa_export_fields) | items2dict] }}"
+      loop: "{{ freeipa_user_find.json.result.result }}"
+      loop_control:
+        label: "{{ item.uid[0] | default('?') }}"
+
+    - name: Write the portable export file
+      ansible.builtin.copy:
+        content: "{{ freeipa_export_document | to_nice_json }}\n"
+        dest: "{{ freeipa_export_file }}"
+      delegate_to: localhost
+      vars:
+        freeipa_export_document:
+          exported_from_realm: "{{ freeipa_realm }}"
+          exported_at: "{{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}"
+          users: "{{ freeipa_export_users | default([]) }}"
+
+    - name: Report what was exported
+      ansible.builtin.debug:
+        msg: >-
+          Exported {{ freeipa_export_users | default([]) | length }}
+          user(s) from {{ freeipa_realm }} to {{ freeipa_export_file }}.

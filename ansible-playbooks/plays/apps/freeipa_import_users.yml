@@ -1,0 +1,119 @@
+# Imports a portable user export (freeipa_export_users.yml's output)
+# into this environment's FreeIPA. Idempotent and safe to re-run --
+# community.general.ipa_user/ipa_group are both create-or-modify
+# modules, so importing the same file twice just confirms nothing
+# changed the second time, same as any other Ansible task.
+#
+# No Kerberos key/password crosses environments (see
+# freeipa_export_users.yml's own comment for why one can't) -- every
+# imported account is created with freeipa_import_password as a
+# one-time password. IPA already forces a password reset at next login
+# whenever an admin sets a user's password this way (same behaviour a
+# freshly `ipa user-add`'d account gets), so there's no
+# krbpasswordexpiration override needed here, unlike
+# roles/freeipa/tasks/main.yml's own bind-account task which
+# deliberately avoids that reset for its non-interactive service
+# accounts. update_password: on_create means re-running this play
+# against accounts that already exist here never resets their real,
+# already-changed password back to the imported one-time value.
+#
+# Group memberships come along for the ride (memberof_group in the
+# export), added with append: true so this only ever adds imported
+# users to groups -- it never removes an existing member who wasn't
+# part of the export. Groups referenced in the export that don't yet
+# exist here are created bare (name only) by ipa_group; ipausers is
+# skipped since IPA already puts every user in it automatically.
+# Anything beyond plain group membership (HBAC/sudo rules, roles) is
+# out of scope for now -- add it here if a future export needs it.
+#
+# Run against a specific environment's freeipa host:
+#
+#   ansible-playbook --ask-vault-pass -i inventory/<env> \
+#     plays/apps/freeipa_import_users.yml \
+#     -e freeipa_import_file=/path/to/users.json \
+#     -e freeipa_import_password='...'
+#
+# Validate against testzone before dangerzone, same as any other
+# change here -- there's no meaningful --check mode for this play (the
+# ipa_user/ipa_group modules do support check_mode, but the read of
+# freeipa_import_file and the group-membership bookkeeping happen via
+# set_fact regardless, so --check only skips the actual IPA writes, not
+# a full dry run of what they'd be).
+- name: Import a portable FreeIPA user export
+  hosts: freeipa
+  become: false
+  gather_facts: false
+
+  vars:
+    freeipa_import_file: "{{ inventory_dir }}/freeipa-users-export.json"
+    freeipa_import_password: ""
+
+  tasks:
+    - name: Require an import file and a one-time password
+      ansible.builtin.assert:
+        that:
+          - freeipa_import_file | length > 0
+          - freeipa_import_password | length > 0
+        fail_msg: >-
+          Pass -e freeipa_import_file=/path/to/export.json and
+          -e freeipa_import_password='...' -- the latter is the
+          one-time password every imported account will be forced to
+          change at next login, not a stored secret, so generate a
+          fresh one per import run (e.g. `openssl rand -base64 18`)
+          rather than reusing an old one.
+
+    - name: Read the portable export file
+      ansible.builtin.set_fact:
+        freeipa_import_document: "{{ lookup('file', freeipa_import_file) | from_json }}"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Create/update each imported user account
+      community.general.ipa_user:
+        name: "{{ item.uid[0] }}"
+        givenname: "{{ item.givenname[0] | default(omit) }}"
+        sn: "{{ item.sn[0] | default(omit) }}"
+        mail: "{{ item.mail | default(omit) }}"
+        title: "{{ item.title[0] | default(omit) }}"
+        homedirectory: "{{ item.homedirectory[0] | default(omit) }}"
+        loginshell: "{{ item.loginshell[0] | default(omit) }}"
+        sshpubkey: "{{ item.ipasshpubkey | default(omit) }}"
+        password: "{{ freeipa_import_password }}"
+        update_password: on_create
+        ipa_host: "{{ inventory_hostname }}.{{ base_domain }}"
+        ipa_user: admin
+        ipa_pass: "{{ freeipa_admin_password }}"
+      loop: "{{ freeipa_import_document.users }}"
+      loop_control:
+        label: "{{ item.uid[0] }}"
+      no_log: true
+
+    - name: Compute each exported group's imported membership
+      ansible.builtin.set_fact:
+        freeipa_import_groups: "{{ freeipa_import_groups | default({}) | combine({item.1: (freeipa_import_groups[item.1] | default([])) + [item.0.uid[0]]}) }}"
+      loop: "{{ freeipa_import_document.users | subelements('memberof_group', skip_missing=True) }}"
+      loop_control:
+        label: "{{ item.0.uid[0] }}/{{ item.1 }}"
+
+    - name: Add imported users to their exported groups
+      community.general.ipa_group:
+        name: "{{ item.key }}"
+        user: "{{ item.value }}"
+        append: true
+        ipa_host: "{{ inventory_hostname }}.{{ base_domain }}"
+        ipa_user: admin
+        ipa_pass: "{{ freeipa_admin_password }}"
+      loop: "{{ freeipa_import_groups | default({}) | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when: item.key != 'ipausers'
+
+    - name: Report what was imported
+      ansible.builtin.debug:
+        msg: >-
+          Imported {{ freeipa_import_document.users | length }} user(s)
+          (originally exported from
+          {{ freeipa_import_document.exported_from_realm }} at
+          {{ freeipa_import_document.exported_at }}) into
+          {{ freeipa_realm }}. Each imported account must change its
+          password at next login.

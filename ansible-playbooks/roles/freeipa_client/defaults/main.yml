@@ -1,0 +1,9 @@
+---
+# Master switch -- off by default, same idiom as freeipa_enabled/
+# firewall_enabled (see roles/freeipa/defaults/main.yml). Turn on per
+# host/group once plays/apps/freeipa.yml's firewall widening for Plan 4
+# has already run (docs/Typical_Procedure.md's "FreeIPA-backed SSH
+# access" section) -- ipa-client-install needs FreeIPA's LDAP/Kerberos
+# ports reachable from this host, and obviously needs freeipa_enabled's
+# server to already exist.
+freeipa_client_enabled: false

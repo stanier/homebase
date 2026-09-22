@@ -484,6 +484,17 @@ server, and `freeipa`'s A record plus the `_kerberos`/`_ldap` SRV
 records IPA clients need live by hand in that host's `dns/` zone file
 instead. See `roles/freeipa/tasks/main.yml`'s own comment for why.
 
+One more, for Plan 4's personal SSH/sudo access
+(`plays/apps/freeipa_ssh_access.yml`): a `vault_freeipa_<uid>_password`
+per entry in `host_vars/freeipa.yml`'s `freeipa_admin_users` list (e.g.
+`vault_freeipa_keyton_password`), referenced from that entry's own
+`password` field. Unlike the bind-account passwords above, this one
+*is* meant to be a one-time bootstrap/reset value, not a long-lived
+secret -- FreeIPA forces a Kerberos password change at next login for
+any account an admin sets a password on this way, so the real,
+day-to-day password never actually lives in the vault. See
+`docs/Typical_Procedure.md`'s "FreeIPA-backed SSH access" section.
+
 #### The automation account
 
 `roles/common` also provisions a dedicated `automation` service account on

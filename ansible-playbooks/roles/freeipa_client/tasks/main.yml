@@ -1,0 +1,277 @@
+---
+# Enrolls this host as a FreeIPA client (SSSD-backed identity/auth) and
+# wires sshd to accept IPA-managed users' public keys -- Plan 4. Pairs
+# with plays/apps/freeipa_ssh_access.yml, which configures the
+# HBAC/sudo policy against the freeipa server itself once hosts
+# enrolled here show up as IPA host objects -- see
+# docs/Typical_Procedure.md's "FreeIPA-backed SSH access" section for
+# the full picture.
+#
+# ipa-client-install, like ipa-server-install, is neither idempotent
+# nor safe to re-run -- it refuses outright once /etc/ipa/default.conf
+# exists -- so every mutating task below is gated on that file's
+# absence, same reasoning as roles/freeipa/tasks/main.yml's own install
+# gate. That file happens to already exist on the freeipa host itself
+# (written by ipa-server-install), which is why
+# plays/apps/freeipa_client.yml targets "vm:!freeipa" rather than
+# relying on this check alone to skip the server.
+- name: Set this host's hostname to its FQDN
+  # ipa-client-install refuses outright otherwise ("invalid hostname:
+  # not fully qualified") -- it never auto-appends --domain, and a
+  # Kerberos host principal (host/<fqdn>@REALM) fundamentally needs a
+  # real FQDN, not a install-time nicety to work around. Same
+  # requirement roles/freeipa/tasks/main.yml's own identical task
+  # documents for the server side.
+  #
+  # Not gated on freeipa_client_default_conf -- self-heals every run,
+  # which matters because roles/common/tasks/set_hostname.yml (applied
+  # fleet-wide by plays/system/update.yml/baseline_packages.yml, both
+  # "hosts: all") unconditionally resets every host back to its short
+  # inventory_hostname, including this one. That's a pre-existing
+  # conflict roles/freeipa's own server-side hostname task already
+  # lives with today -- re-run this play after any update.yml/
+  # baseline_packages.yml run to restore the FQDN if SSSD/Kerberos
+  # starts misbehaving.
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}.{{ base_domain }}"
+  when: freeipa_client_enabled
+
+- name: Ensure the FQDN resolves locally before enrolling
+  # Same belt-and-suspenders as roles/freeipa's identical task: don't
+  # depend on the central DNS zone (container-sandbox's AdGuardHome/
+  # bind, hand-maintained) having a correct, current A record for
+  # every single [vm] host -- it doesn't today for several of them.
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: "^{{ app_ip }}\\s"
+    line: "{{ app_ip }} {{ inventory_hostname }}.{{ base_domain }} {{ inventory_hostname }}"
+    state: present
+  when: freeipa_client_enabled
+
+- name: Check whether this host is already an IPA client (or server)
+  ansible.builtin.stat:
+    path: /etc/ipa/default.conf
+  register: freeipa_client_default_conf
+  when: freeipa_client_enabled
+
+- name: Check whether a previous enrollment actually finished configuring SSSD
+  # ipa-client-install writes /etc/ipa/default.conf and /etc/sssd/sssd.conf
+  # fairly early, then only starts/enables sssd once the join genuinely
+  # succeeds -- a run that fails partway through (DNS/KDC unreachable,
+  # see the "Run ipa-client-install" task's own comment) can leave both
+  # files behind, fully populated, with sssd never actually running.
+  # Checking file existence alone (an earlier version of this task)
+  # treats that host as already enrolled forever after, which also
+  # meant the sshd-hardening task below went ahead and disabled
+  # password auth for a host with no working SSSD to serve keys
+  # instead, locking out every IPA-managed user. is-active is the one
+  # signal that actually reflects whether the join finished, not just
+  # whether ipa-client-install got as far as writing config files.
+  ansible.builtin.command:
+    argv: [systemctl, is-active, sssd]
+  register: freeipa_client_sssd_active
+  changed_when: false
+  failed_when: false
+  when: freeipa_client_enabled
+
+- name: Determine whether (re-)enrollment is needed
+  ansible.builtin.set_fact:
+    freeipa_client_needs_install: "{{ not freeipa_client_default_conf.stat.exists or freeipa_client_sssd_active.stdout != 'active' }}"
+  when: freeipa_client_enabled
+
+- name: Clean up a stale, non-functional enrollment before retrying
+  # ipa-client-install's own install_check() treats the mere presence
+  # of /var/lib/ipa-client/sysrestore/ contents (sysrestore.index in
+  # particular, not just sysrestore.state) as "already configured" and
+  # refuses outright -- regardless of /etc/ipa/default.conf's state --
+  # even when freeipa_client_needs_install above has just determined
+  # the join never actually finished (sssd isn't running). Confirmed by
+  # hitting this exact refusal on a host where default.conf/sssd.conf
+  # had already been removed but sysrestore.index (written earlier, at
+  # the point ipa-client-install starts tracking what it's about to
+  # change) survived. ipa-client-install --uninstall is *not* the right
+  # tool to clear this either -- it uses this same sysrestore state to
+  # decide what to roll back, so on a host that failed before finishing
+  # it instead refuses with "IPA client is not configured on this
+  # system". Removing the whole directory (plus default.conf/sssd.conf)
+  # directly sidesteps every one of ipa-client-install's own state
+  # checks. /etc/ipa/default.conf is owned by the ipa-client-common RPM
+  # (rpm -qf confirms) but isn't restored by re-running Ansible's
+  # package task since the package is already installed either way.
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/ipa/default.conf
+    - /etc/sssd/sssd.conf
+    - /var/lib/ipa-client/sysrestore
+  when:
+    - freeipa_client_enabled
+    - freeipa_client_needs_install
+
+- name: Recreate the empty sysrestore directory
+  # ipa-client-install expects this directory to already exist (it's
+  # normally created once, persistently, rather than by
+  # ipa-client-install itself) and fails outright with a bare ENOENT
+  # if it's missing -- removing it wholesale above (rather than just
+  # its contents) was one step too far.
+  ansible.builtin.file:
+    path: /var/lib/ipa-client/sysrestore
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when:
+    - freeipa_client_enabled
+    - freeipa_client_needs_install
+
+- name: Install the FreeIPA client package
+  ansible.builtin.package:
+    name: ipa-client
+    state: present
+  when:
+    - freeipa_client_enabled
+    - freeipa_client_needs_install
+    - ansible_facts['os_family'] == "RedHat"
+
+- name: Stage FreeIPA's CA certificate for client enrollment
+  # ipa-client-install's --ca-cert-file pins this explicitly rather
+  # than trusting whatever the initial bootstrap connection happens to
+  # offer -- same "pin it, don't trust-on-first-use" reasoning as
+  # roles/common's trust_root_ca.yml. freeipa_ca_cert is the same file
+  # roles/freeipa/tasks/main.yml fetches off the server itself (see
+  # group_vars/all/vars.yml).
+  ansible.builtin.copy:
+    content: "{{ freeipa_ca_cert }}"
+    dest: /etc/ipa-client-enrollment-ca.crt
+    mode: "0644"
+  when:
+    - freeipa_client_enabled
+    - freeipa_client_needs_install
+
+- name: Run ipa-client-install
+  # --mkhomedir so a first-ever interactive login creates $HOME instead
+  # of dropping the user in /. This also drives ipa-client-install's
+  # own authselect configuration (selects the "sssd" profile with the
+  # "with-mkhomedir" feature) -- no separate authselect task needed;
+  # SSSD's nsswitch sudoers entry comes from that same base "sssd"
+  # profile regardless.
+  #
+  # Enrolls via the admin principal/password (no_log, argv -- same
+  # rationale as roles/freeipa's own ipa-server-install task) rather
+  # than a one-time-password minted per host: this fleet already treats
+  # freeipa_admin_password as a shared automation credential (Plan 3's
+  # bind-account task uses it the same way), so there's no meaningful
+  # security loss versus tracking per-host OTPs by hand, and it keeps
+  # enrollment a single unattended step.
+  block:
+    - name: Run ipa-client-install
+      # KRB5CCNAME forces a file-based credential cache instead of
+      # krb5.conf's own default_ccache_name = KEYRING:persistent:%{uid}
+      # -- ipa-client-install's post-join schema-fetch step (a separate
+      # GSSAPI/HTTP call to the server made *after* the join itself
+      # already succeeds) failed on authentik specifically with a
+      # generic "Cannot contact any KDC" GSS error that turned out to
+      # be this step's own credential-cache access failing, not an
+      # actual network/KDC problem -- ansible.builtin.command runs
+      # without a full login session/PAM keyinit, so the kernel
+      # persistent keyring this host's default ccache type relies on
+      # was never joined for this process. A plain file avoids needing
+      # a session keyring at all.
+      ansible.builtin.command:
+        argv:
+          - ipa-client-install
+          - --unattended
+          - "--domain={{ base_domain }}"
+          - "--realm={{ freeipa_realm }}"
+          - --principal=admin
+          - "--password={{ freeipa_admin_password }}"
+          - --ca-cert-file=/etc/ipa-client-enrollment-ca.crt
+          - --mkhomedir
+          # AdGuardHome/bind owns this zone and was never set up for
+          # dynamic DNS updates from IPA clients -- same reasoning as
+          # roles/freeipa never passing --setup-dns. Without this,
+          # ipa-client-install attempts an SSHFP nsupdate that can only
+          # ever fail (and did, for some hosts, as "Name or service not
+          # known" resolving the update target).
+          - --no-dns-sshfp
+          # A prior failed attempt can still register this host's
+          # object on the server before failing locally and rolling
+          # back (join succeeds server-side, then a later step fails
+          # and the client-side install aborts) -- our own idempotency
+          # check only looks at the local /etc/ipa/default.conf, which
+          # doesn't exist after a rollback, so a retry would otherwise
+          # hit "Joining realm failed: Host is already joined." forever.
+          # --force-join re-joins even if the server already has a host
+          # object for this name.
+          - --force-join
+      environment:
+        KRB5CCNAME: FILE:/tmp/ipa-client-install-ccache
+      no_log: true
+  rescue:
+    # no_log above hides the admin password (it's in argv), but that
+    # also hides the *reason* it failed -- ipa-client-install logs its
+    # own diagnosis to this file regardless of no_log, so surface it
+    # (no secrets in there, just what it checked/rejected) instead of
+    # failing blind.
+    - name: Read ipa-client-install's own log for the real failure reason
+      # grep for ERROR/CRITICAL across the whole file, not just the
+      # tail -- some failures raise a bare ScriptError with no message
+      # of their own, where the actual diagnosis is an ERROR line
+      # earlier in the file that a plain tail can miss once enough
+      # stack-trace noise follows it.
+      ansible.builtin.shell:
+        cmd: grep -E "ERROR|CRITICAL" /var/log/ipaclient-install.log | tail -n 20
+      register: freeipa_client_install_log
+      changed_when: false
+      failed_when: false
+
+    - name: Fail with ipa-client-install's actual error
+      ansible.builtin.fail:
+        msg: |-
+          ipa-client-install failed. Last lines of
+          /var/log/ipaclient-install.log:
+          {{ freeipa_client_install_log.stdout | default('(log not found)') }}
+  when:
+    - freeipa_client_enabled
+    - freeipa_client_needs_install
+
+- name: Check whether SSSD is actually running now
+  # Re-checked post-install rather than reusing
+  # freeipa_client_sssd_active above -- that one only reflects state
+  # from *before* this run's own install attempt, which is exactly the
+  # stale read that caused the bug this task's own comment above
+  # describes.
+  ansible.builtin.command:
+    argv: [systemctl, is-active, sssd]
+  register: freeipa_client_sssd_active_now
+  changed_when: false
+  failed_when: false
+  when: freeipa_client_enabled
+
+- name: Allow sshd to serve IPA-managed users' public keys
+  # AuthorizedKeysCommandUser must be an unprivileged account that
+  # itself needs no special access -- "nobody" is the standard choice
+  # (sss_ssh_authorizedkeys only reads from SSSD's own cache/LDAP
+  # lookup). PasswordAuthentication no keeps this pubkey-only, matching
+  # this fleet's existing key-only access everywhere else -- see
+  # docs/Typical_Procedure.md. Gated on SSSD actually being active (not
+  # just freeipa_client_enabled) -- see freeipa_client_sssd_active's
+  # comment above for why: a host with no working SSSD must keep
+  # password auth available, or every IPA-managed user is locked out
+  # with no fallback.
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/10-freeipa.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ansible-playbooks (roles/freeipa_client) -- do not
+      # edit by hand.
+      AuthorizedKeysCommand /usr/bin/sss_ssh_authorizedkeys
+      AuthorizedKeysCommandUser nobody
+      PasswordAuthentication no
+  when:
+    - freeipa_client_enabled
+    - freeipa_client_sssd_active_now.stdout == 'active'
+  notify: restart sshd

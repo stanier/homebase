@@ -1,0 +1,45 @@
+# Plan 4: enrolls every [vm] host except freeipa itself as a FreeIPA
+# client (roles/freeipa_client -- SSSD identity/auth, sshd wired to
+# serve IPA-managed users' public keys). "vm:!freeipa" rather than
+# relying purely on that role's own /etc/ipa/default.conf check to skip
+# the server -- explicit at the play level is clearer than leaning on
+# an incidental side effect of ipa-server-install for correctness.
+# [proxmox] hosts (turkey/homelab) are deliberately not targeted here:
+# they're Proxmox VE itself, not one of this fleet's Rocky VM images,
+# already reachable via keyton's personal key
+# (group_vars/proxmox/main.yml), and have their own PAM/auth realm
+# (the Proxmox web UI) that IPA enrollment risks interfering with --
+# out of scope for now, see docs/Typical_Procedure.md.
+#
+# Requires plays/apps/freeipa.yml to have already run against this
+# environment, AND plays/network/firewall.yml to have applied
+# host_vars/freeipa.yml's widened LDAP/Kerberos rule (reachable from
+# the whole app network, not just authentik/keycloak) -- freeipa.yml
+# itself never touches roles/firewall, so both are needed. See
+# docs/Typical_Procedure.md.
+#
+# Run against a specific environment:
+#
+#   ansible-playbook --ask-vault-pass -i inventory/<env> \
+#     plays/apps/freeipa_client.yml
+#
+# Afterwards, (re)run plays/apps/freeipa_ssh_access.yml against the
+# freeipa host so the newly-enrolled hosts' IPA host objects get added
+# to the fleet-vms hostgroup HBAC/sudo actually rely on.
+- name: Enroll fleet VMs as FreeIPA clients
+  hosts: vm:!freeipa
+  become: true
+  # freeipa is a modest 2-core/3GB VM (host_vars/freeipa.yml) --
+  # ipa-client-install does an LDAP bind, a kinit, and several
+  # directory writes per host, and running that concurrently across
+  # every [vm] host at once (Ansible's default forks) was enough to
+  # produce a grab-bag of transient failures (DNS/Kerberos timeouts
+  # that differed host to host, not a consistent block) the first time
+  # this ran fleet-wide. One host at a time avoids piling load onto the
+  # server during a first-time rollout; routine re-runs after this are
+  # idempotent no-ops per host anyway, so serial cost is a one-time
+  # thing.
+  serial: 1
+
+  roles:
+    - freeipa_client
