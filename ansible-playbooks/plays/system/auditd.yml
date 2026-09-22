@@ -1,0 +1,7 @@
+---
+- name: Configure host-level audit logging
+  hosts: all
+  become: true
+
+  roles:
+    - auditd

@@ -1,0 +1,6 @@
+# Managed by ansible-playbooks (roles/auditd). Local changes will be
+# overwritten on the next run -- edit auditd_rules in defaults/main.yml
+# (or override it per-host/group) instead.
+{% for rule in auditd_rules %}
+{{ rule }}
+{% endfor %}
