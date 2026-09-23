@@ -1,0 +1,4 @@
+---
+containerapps_env:
+  demo:
+    QUX_TOKEN: "{{ vault_qux }}"

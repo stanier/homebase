@@ -5,8 +5,15 @@
     key: "{{ containers_user }}"
 
 - name: Compute containers user's XDG_RUNTIME_DIR once for this play
+  # ansible_facts.getent_passwd, not the bare getent_passwd -- newer
+  # ansible-core (2.21 here) can't be relied on to inject module facts
+  # as bare top-level vars anymore. The old bare form doesn't fail
+  # loudly either: it silently produces an Undefined that only surfaces
+  # much later, wherever this fact first gets coerced to a real string
+  # ("Export XDG_RUNTIME_DIR..." below), which is a confusing place to
+  # debug back from.
   ansible.builtin.set_fact:
-    containers_xdg_runtime_dir: "/run/user/{{ getent_passwd[containers_user][1] }}"
+    containers_xdg_runtime_dir: "/run/user/{{ ansible_facts.getent_passwd[containers_user][1] }}"
 
 - name: Ensure containers user's podman config directory exists
   ansible.builtin.file:
@@ -196,22 +203,38 @@
   when: "'syslog' in containerapps_quadlet_services"
 
 - name: Ensure caddy-apps directory exists
-  # caddy.container always bind-mounts appdeploy-state/caddy-apps (see
-  # container-files/caddy/caddy.container), even on a host where
-  # roles/appdeploy_caddy never runs -- that role only targets the
-  # appproxy group, but this quadlet can land on any host in
-  # containerapps_quadlet_services (e.g. container-sandbox). Without
-  # this, podman fails the mount with "statfs: no such file or
-  # directory" and caddy.service never starts. Idempotent alongside
-  # appdeploy_caddy's identical task -- whichever role runs first wins,
-  # the other is a no-op.
+  # Both caddy.container and caddy-l4.container always bind-mount
+  # appdeploy-state/caddy-apps (see container-files/caddy(-l4)), even on
+  # a host where roles/appdeploy_caddy never runs -- that role only
+  # targets the appproxy group, but either quadlet can land on any host
+  # in containerapps_quadlet_services (e.g. container-sandbox, which
+  # runs plain caddy). Without this, podman fails the mount with
+  # "statfs: no such file or directory" and caddy.service never starts.
+  # Idempotent alongside appdeploy_caddy's identical task -- whichever
+  # role runs first wins, the other is a no-op.
   ansible.builtin.file:
     path: "{{ containers_home }}/appdeploy-state/caddy-apps"
     state: directory
     owner: "{{ containers_user }}"
     group: "{{ containers_user }}"
     mode: "0750"
-  when: "'caddy' in containerapps_quadlet_services"
+  when: "'caddy' in containerapps_quadlet_services or 'caddy-l4' in containerapps_quadlet_services"
+
+- name: Ensure ssh-apps directory exists
+  # Same reasoning as caddy-apps above, but scoped to caddy-l4 only --
+  # plain caddy.container has no ssh-apps mount (it's the layer4 build
+  # that routes SSH-over-HTTPS, see container-files/caddy-l4), so a
+  # host running plain caddy (e.g. container-sandbox) has no need for
+  # this directory. appdeploy_caddy's identical task only targets the
+  # appproxy group; idempotent alongside it -- whichever role runs
+  # first wins.
+  ansible.builtin.file:
+    path: "{{ containers_home }}/appdeploy-state/ssh-apps"
+    state: directory
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+    mode: "0750"
+  when: "'caddy-l4' in containerapps_quadlet_services"
 
 - name: Ensure gitea data/config directories exist and are writable by its unprivileged uid
   # gitea.container bind-mounts fixed /srv/gitea/data and /srv/gitea/config

@@ -1,0 +1,15 @@
+[Unit]
+Description=Build caddy-l4 image
+
+[Build]
+ImageTag=localhost/caddy-l4
+File=Containerfile
+SetWorkingDirectory=/srv/containers/container-files/caddy-l4
+
+[Service]
+# xcaddy compiling caddy-l4 from source easily exceeds systemd's default
+# 90s start timeout on first build / without a warm module cache, which
+# fails this build job and cascades into "A dependency job for
+# caddy-l4.service failed" on the .container unit that depends on it.
+# Same fix podman-systemd.unit(5) recommends for slow image pulls.
+TimeoutStartSec=900

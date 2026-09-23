@@ -178,7 +178,8 @@ since the root is shared across environments unlike the intermediate), and
 loaded the same way into `root_ca_cert`, which `roles/common/tasks/trust_root_ca.yml`
 installs into every host's trust store via `copy: content:` instead of a
 static `files/root-ca.crt` in the role. It's also mirrored into
-`container-files/caddy/data/root-ca.crt` and
+`container-files/caddy/data/root-ca.crt`,
+`container-files/caddy-l4/data/root-ca.crt`, and
 `container-files/gitea-runner/data/root-ca.crt` (those stay as plain
 committed files in `container-files`, which isn't published).
 

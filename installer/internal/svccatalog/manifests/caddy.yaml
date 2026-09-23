@@ -1,0 +1,18 @@
+name: caddy
+description: Reverse proxy / TLS termination for every public vhost, using a private offline CA
+core: true
+dedicated_host: false
+network: host
+ports:
+  - number: 80
+    proto: tcp
+  - number: 443
+    proto: tcp
+
+# No containerapps_env -- caddy.container has no EnvironmentFile at all.
+# Its one secret is the offline CA intermediate key, delivered as a
+# plain file drop rather than an env var.
+secret_files:
+  - dest: data/intermediate.key
+    mode: "0600"
+    content: "{{ caddy_intermediate_key }}"

@@ -1,0 +1,11 @@
+name: code-server
+description: Browser-based VS Code
+core: true
+dedicated_host: false
+network: ""
+ports:
+  - number: 8081
+    proto: tcp
+
+env:
+  PASSWORD: "{{ code_server_password }}"

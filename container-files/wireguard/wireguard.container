@@ -1,0 +1,27 @@
+[Unit]
+Description=wg-easy (WireGuard + web UI)
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+# v15 rewrote the config format -- WG_HOST/PASSWORD_HASH (the old v14
+# env vars) no longer do anything; the admin account and WG_HOST both
+# get set up through the web UI's first-login wizard instead. Not
+# compatible with v14 on-disk state either, so don't bump across that
+# boundary without reading the migration notes first.
+Image=ghcr.io/wg-easy/wg-easy:15
+Environment=PORT=51821
+Environment=WG_PORT=51820
+PublishPort=51820:51820/udp
+PublishPort=51821:51821/tcp
+Volume=wireguard_wireguard_data:/etc/wireguard
+AddCapability=NET_ADMIN
+AddCapability=SYS_MODULE
+Sysctl=net.ipv4.ip_forward=1
+Sysctl=net.ipv4.conf.all.src_valid_mark=1
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

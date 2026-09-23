@@ -1,0 +1,23 @@
+[Unit]
+Description=Caddy (with layer4 SSH-over-HTTPS routing)
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+ContainerName=caddy
+Image=caddy-l4.build
+Network=host
+Volume=/srv/containers/container-files/caddy-l4/data/Caddyfile:/etc/caddy/Caddyfile:ro,z
+Volume=/srv/containers/container-files/caddy-l4/data/root-ca.crt:/etc/caddy/root-ca.crt:ro,z
+Volume=/srv/containers/container-files/caddy-l4/data/intermediate.crt:/etc/caddy/intermediate.crt:ro,z
+Volume=/srv/containers/container-files/caddy-l4/data/intermediate.key:/etc/caddy/intermediate.key:ro,z
+Volume=/srv/containers/appdeploy-state/caddy-apps:/etc/caddy/apps:ro,z
+Volume=/srv/containers/appdeploy-state/ssh-apps:/etc/caddy/ssh-apps:ro,z
+Volume=caddy_caddy_data:/data
+Volume=caddy_caddy_config:/config
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

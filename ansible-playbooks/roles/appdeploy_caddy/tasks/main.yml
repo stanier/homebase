@@ -15,7 +15,7 @@
 
 # Holds the layer4 route snippet for each ssh-type app (see
 # templates/caddy-route.sh.j2), imported into the layer4 block by
-# container-files/caddy's Caddyfile -- separate from caddy-apps above
+# container-files/caddy-l4's Caddyfile -- separate from caddy-apps above
 # since these aren't ordinary http vhosts.
 - name: Ensure ssh-apps directory exists
   ansible.builtin.file:

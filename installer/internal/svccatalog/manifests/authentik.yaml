@@ -1,0 +1,26 @@
+name: authentik
+description: SSO / identity provider (server + worker + Postgres + Redis)
+core: true
+dedicated_host: false
+# Its own dedicated Quadlet network (authentik.network) rather than the
+# default bridge, so its four units (postgresql/redis/server/worker,
+# all reading the same containerapps_env.authentik block) can address
+# each other by NetworkAlias without publishing internal ports -- see
+# container-files/README.md's networking conventions.
+network: authentik.network
+ports:
+  - number: 9000
+    proto: tcp
+    note: server (web UI / API)
+
+env:
+  POSTGRES_PASSWORD: "{{ authentik_pg_password }}"
+  AUTHENTIK_POSTGRESQL__PASSWORD: "{{ authentik_pg_password }}"
+  AUTHENTIK_SECRET_KEY: "{{ authentik_secret_key }}"
+  AUTHENTIK_BOOTSTRAP_PASSWORD: "{{ authentik_bootstrap_password }}"
+  AUTHENTIK_BOOTSTRAP_TOKEN: "{{ authentik_bootstrap_token }}"
+  AUTHENTIK_BOOTSTRAP_EMAIL: "admin@{{ base_domain }}"
+
+# Plan 3's FreeIPA LDAP Source blueprint (data/blueprints/freeipa-ldap-source.yaml,
+# an optional containerapps_secret_files entry conditional on FreeIPA
+# also being deployed) isn't modeled here -- required env only.

@@ -42,6 +42,7 @@ A host only runs the services listed for it in
 | Service | What it is |
 |---|---|
 | `caddy` | Reverse proxy / TLS termination for every public vhost, using a private offline CA |
+| `caddy-l4` | Same as `caddy`, plus a custom `xcaddy` build that adds layer4 SSH-over-HTTPS routing for appdeploy'd SSH apps — only needed on the fleet's edge proxy (`app-proxy`); everywhere else runs plain `caddy` |
 | `dns` (BIND) | Authoritative DNS, RFC2136 dynamic updates for ACME DNS-01 |
 | `adguardhome` | Recursive DNS + ad/tracker blocking |
 | `alertmanager` | Alert routing/notification (pairs with `victoriametrics`/`grafana`) |
@@ -58,9 +59,11 @@ A host only runs the services listed for it in
 | `minio` | Self-hosted S3-compatible object storage |
 | `syslog` | Central rsyslog receiver for the fleet |
 | `node-exporter` / `podman-exporter` | Prometheus metrics exporters (host / podman) |
+| `trivy` | Vulnerability/SBOM scanner (server mode), for `gitea-runner` CI to scan images against |
 | `uptime-kuma` | External-facing uptime/status monitoring |
 | `wazuh` | Endpoint security (HIDS): manager + indexer + dashboard (agents installed by `ansible-playbooks/roles/wazuh_agent`) |
 | `vaultwarden` | Self-hosted Bitwarden-compatible password manager |
+| `wireguard` (`wg-easy`) | VPN entry point + web UI, for remote access into the homelab |
 | `windows` | A full Windows VM-in-a-container (`dockur/windows`), for one-off Windows-only needs |
 
 See [`docs/roadmap.md`](docs/roadmap.md) for services planned but not
