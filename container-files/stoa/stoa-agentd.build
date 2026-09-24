@@ -6,3 +6,12 @@ ImageTag=localhost/stoa-agentd
 File=Containerfile
 Target=agentd
 SetWorkingDirectory=/srv/containers/container-files/stoa
+
+# First in the build chain (see stoa-apikeyd.build's After= for why these
+# 7 .build units are ordered relative to each other at all) -- pays for
+# the shared `builder` stage's `go mod download` + precompile from cold,
+# which every other Go target's build then hits from Podman's layer
+# cache. TimeoutStartSec matches the rest of the chain -- see that unit's
+# comment for why 90s (systemd's default) isn't enough.
+[Service]
+TimeoutStartSec=3600

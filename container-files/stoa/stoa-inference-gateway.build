@@ -1,8 +1,14 @@
 [Unit]
 Description=Build stoa inference-gateway image
+# See stoa-apikeyd.build's comment -- part of the same serialized chain.
+After=stoa-local-idp-build.service
 
 [Build]
 ImageTag=localhost/stoa-inference-gateway
 File=Containerfile
 Target=inference-gateway
 SetWorkingDirectory=/srv/containers/container-files/stoa
+
+# See stoa-apikeyd.build's comment.
+[Service]
+TimeoutStartSec=3600

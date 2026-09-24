@@ -1,8 +1,14 @@
 [Unit]
 Description=Build stoa authd image
+# See stoa-apikeyd.build's comment -- part of the same serialized chain.
+After=stoa-apikeyd-build.service
 
 [Build]
 ImageTag=localhost/stoa-authd
 File=Containerfile
 Target=authd
 SetWorkingDirectory=/srv/containers/container-files/stoa
+
+# See stoa-apikeyd.build's comment.
+[Service]
+TimeoutStartSec=3600

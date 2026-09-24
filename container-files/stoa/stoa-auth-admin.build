@@ -1,8 +1,14 @@
 [Unit]
 Description=Build stoa auth-admin image (one-shot DB migrations for agentd/authd/local-idp)
+# See stoa-apikeyd.build's comment -- last in the same serialized chain.
+After=stoa-webd-build.service
 
 [Build]
 ImageTag=localhost/stoa-auth-admin
 File=Containerfile
 Target=auth-admin
 SetWorkingDirectory=/srv/containers/container-files/stoa
+
+# See stoa-apikeyd.build's comment.
+[Service]
+TimeoutStartSec=3600

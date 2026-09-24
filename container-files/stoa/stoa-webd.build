@@ -1,8 +1,18 @@
 [Unit]
 Description=Build stoa webd image
+# See stoa-apikeyd.build's comment -- part of the same serialized chain.
+# webd is also the only target that touches the Node/Svelte web-builder
+# stage (npm install + vite build), on top of the shared Go builder
+# stage every other target already primed -- expect this one to take
+# longest even with the cache warm.
+After=stoa-inference-gateway-build.service
 
 [Build]
 ImageTag=localhost/stoa-webd
 File=Containerfile
 Target=webd
 SetWorkingDirectory=/srv/containers/container-files/stoa
+
+# See stoa-apikeyd.build's comment.
+[Service]
+TimeoutStartSec=3600
