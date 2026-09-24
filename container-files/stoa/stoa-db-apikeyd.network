@@ -1,0 +1,6 @@
+[Unit]
+Description=Stoa apikeyd <-> its Postgres (internal -- no internet route)
+
+[Network]
+NetworkName=postgres-apikeyd-net
+Internal=true

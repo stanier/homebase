@@ -1,0 +1,8 @@
+[Unit]
+Description=Build stoa authd image
+
+[Build]
+ImageTag=localhost/stoa-authd
+File=Containerfile
+Target=authd
+SetWorkingDirectory=/srv/containers/container-files/stoa

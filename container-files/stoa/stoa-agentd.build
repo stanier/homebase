@@ -1,0 +1,8 @@
+[Unit]
+Description=Build stoa agentd image
+
+[Build]
+ImageTag=localhost/stoa-agentd
+File=Containerfile
+Target=agentd
+SetWorkingDirectory=/srv/containers/container-files/stoa

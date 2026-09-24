@@ -1,0 +1,23 @@
+[Unit]
+Description=Stoa local-idp PostgreSQL
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/library/postgres:16-alpine
+Network=stoa-db-localidp.network
+NetworkAlias=postgres-localidp
+Environment=POSTGRES_USER=localidp
+Environment=POSTGRES_DB=localidp
+EnvironmentFile=/srv/containers/container-files/stoa/postgres-localidp.env
+Volume=stoa_postgres_localidp:/var/lib/postgresql/data
+HealthCmd=pg_isready -U localidp
+HealthInterval=5s
+HealthTimeout=5s
+HealthRetries=10
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

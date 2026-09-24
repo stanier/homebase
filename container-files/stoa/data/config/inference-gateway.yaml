@@ -1,0 +1,69 @@
+# inference-gateway configuration
+#
+# Upstream API keys are never stored here in plaintext.
+# Each upstream references an environment variable via api_key_env.
+# Set those variables in your .env file (they are already present for agentd).
+
+listen: ":8080"
+
+# apikeyd URL — when set, all inference endpoints require a valid API key.
+# Remove or leave empty to run the proxy without inbound authentication.
+apikeyd_url: "http://apikeyd:8889"
+
+# Optional gateway features.
+gateway:
+  # fallback_chain: ordered list of upstream names to try when the primary
+  # upstream returns a retryable error (5xx, network failure, timeout).
+  # fallback_chain: ["anthropic", "openai"]
+
+  # Per-user rate limiting (keyed on user_id from apikeyd key verification).
+  rate_limit:
+    enabled: false
+    requests_per_minute: 60
+
+upstreams:
+  - name: anthropic
+    dialect: anthropic
+    api_url: https://stoa.example.org/
+    api_key_env: ANTHROPIC_API_KEY   # reuses the same var as agentd
+    default_model: qwen3.5-35b-a3b
+    default_max_tokens: 8096
+
+  # Uncomment to add an OpenAI upstream alongside Anthropic:
+  # - name: openai
+  #   dialect: openai
+  #   api_url: https://api.openai.com/v1
+  #   api_key_env: OPENAI_API_KEY
+  #   default_model: gpt-4o
+  #   default_max_tokens: 4096
+
+  # Uncomment to add a Gemini upstream:
+  # - name: gemini
+  #   dialect: gemini
+  #   api_key_env: GEMINI_API_KEY
+  #   default_model: gemini-2.0-flash
+  #   default_max_tokens: 8096
+
+  # static_models_only: true disables automatic model discovery for this upstream.
+  # The provider's /models endpoint is not called. Only models explicitly listed
+  # in the routes below are exposed in /v1/models. Use this for aggregators like
+  # OpenRouter where you want to control exactly which models are available.
+  # - name: openrouter
+  #   dialect: openai
+  #   api_url: https://openrouter.ai/api/v1
+  #   api_key_env: OPENROUTER_API_KEY
+  #   default_model: openai/gpt-4o
+  #   default_max_tokens: 4096
+  #   static_models_only: true
+
+routes:
+  # Route everything to Anthropic by default.
+  # Add model-specific rules above the wildcard to split traffic.
+  #
+  # Examples:
+  #   - model: "gpt-4o"
+  #     upstream: openai
+  #   - model: "gemini-2.0-flash"
+  #     upstream: gemini
+  - model: "*"
+    upstream: anthropic

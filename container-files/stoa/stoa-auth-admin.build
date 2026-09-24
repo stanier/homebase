@@ -1,0 +1,8 @@
+[Unit]
+Description=Build stoa auth-admin image (one-shot DB migrations for agentd/authd/local-idp)
+
+[Build]
+ImageTag=localhost/stoa-auth-admin
+File=Containerfile
+Target=auth-admin
+SetWorkingDirectory=/srv/containers/container-files/stoa

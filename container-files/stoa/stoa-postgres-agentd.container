@@ -1,0 +1,23 @@
+[Unit]
+Description=Stoa agentd PostgreSQL
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/library/postgres:16-alpine
+Network=stoa-db-agentd.network
+NetworkAlias=postgres-agentd
+Environment=POSTGRES_USER=agentd
+Environment=POSTGRES_DB=agentd
+EnvironmentFile=/srv/containers/container-files/stoa/postgres-agentd.env
+Volume=stoa_postgres_agentd:/var/lib/postgresql/data
+HealthCmd=pg_isready -U agentd
+HealthInterval=5s
+HealthTimeout=5s
+HealthRetries=10
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

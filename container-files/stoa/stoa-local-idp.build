@@ -1,0 +1,8 @@
+[Unit]
+Description=Build stoa local-idp image
+
+[Build]
+ImageTag=localhost/stoa-local-idp
+File=Containerfile
+Target=local-idp
+SetWorkingDirectory=/srv/containers/container-files/stoa

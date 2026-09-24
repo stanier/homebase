@@ -1,0 +1,398 @@
+# Container configuration for Chat TUI
+# Mounted read-only at /root/.config/chat-tui/
+# API credentials and endpoint URL are injected at runtime via the env vars named below.
+
+llm:
+  # default names the active provider. When omitted, the first entry is used.
+  default: gateway
+
+  providers:
+    - name: gateway
+      # type controls the wire protocol: "anthropic", "openai" (any compatible endpoint), "gemini"
+      type: anthropic
+
+      # Model to use — set here in YAML; not read from environment variables.
+      model: claude-sonnet-4-5-20250929
+      max_tokens: 8000
+
+      # api_key_env / api_url_env name the env vars that hold credentials and the
+      # endpoint URL. These names must match the *_FILE and URL vars in compose.
+      # The podman secret name (anthropic_api_key) is separate — see docker-compose.yml.
+      api_key_env: GATEWAY_API_KEY   # compose sets GATEWAY_API_KEY_FILE → /run/secrets/anthropic_api_key
+      api_url_env: GATEWAY_API_URL   # set GATEWAY_API_URL=https://api.anthropic.com in .env
+
+      # tls_skip_verify: true   # only needed when using a local proxy with a self-signed cert
+
+      # Optional sampling parameters (uncomment to enable)
+      # temperature: 1.0              # 0.0–2.0
+      # top_p: 0.9                    # 0.0–1.0
+      # top_k: 40                     # Anthropic only
+      # enable_thinking: true         # Anthropic extended thinking
+      # thinking_budget_tokens: 10000
+
+    # Additional providers (e.g. a bigger model for occasional use)
+    # - name: anthropic-opus
+    #   type: anthropic
+    #   model: claude-opus-4-5
+    #   max_tokens: 8000
+    #   api_key_env: ANTHROPIC_API_KEY
+
+    # Arcee AI (OpenAI-compatible)
+    # - name: arcee
+    #   type: openai
+    #   model: arcee-blitz          # or arcee-nova, arcee-spotlight, etc.
+    #   max_tokens: 8000
+    #   api_key_env: ARCEE_API_KEY  # read from podman secret arcee_api_key via _FILE
+    #   api_url_env: ARCEE_API_URL  # set ARCEE_API_URL=https://api.arcee.ai/v2 in .env
+
+# titling:
+#   enabled: true
+#   provider: ""   # name from llm.providers; empty = use default
+#   model: ""      # model ID; empty = provider default (use a fast/cheap model)
+#   prompt: ""     # override the built-in titling system prompt
+#   disable_thinking: true  # suppress extended thinking for the titling call (default true)
+#                           # set false to let the selected provider's enable_thinking apply
+
+ui:
+  theme: dark
+  show_timestamps: true
+  hide_system_prompt: false
+  persona: default
+
+mcp:
+  enabled: true
+  proxy_address: "http://stoa-squid:3128"
+  servers:
+    - name: filesystem
+      transport: docker
+      image: mcp-filesystem:local
+      network_mode: none
+      volumes:
+        - type: volume
+          source: mcp-workspace
+          target: /mcp/root
+          read_only: false
+      args:
+        - -root
+        - /mcp/root
+      policies:
+        - tool_pattern: "mcp_filesystem_read_*"
+          rank: 0
+          reason: "File reads are non-destructive"
+        - tool_pattern: "mcp_filesystem_write_*"
+          rank: 2
+          reason: "File writes require explicit approval"
+
+    - name: agent-memory
+      transport: docker
+      image: mcp-memory:local
+      network_mode: none
+      volumes:
+        - type: volume
+          source: mcp-memory-data
+          target: /data
+          read_only: false
+      env:
+        MEMORY_DB_PATH: /data/memory.db
+      policies:
+        - tool_pattern: "mcp_agent-memory_*"
+          rank: 0
+          reason: "Memory operations are safe and non-destructive"
+
+    - name: time
+      transport: docker
+      image: mcp-time:local
+      network_mode: none
+      policies:
+        - tool_pattern: "mcp_time_*"
+          rank: 0
+          reason: "Time operations are read-only"
+
+    - name: fetch
+      transport: docker
+      image: mcp-fetch:local
+      network_mode: agent-external  # has built-in SSRF protection via safeDialContext; proxy adds nothing
+      policies:
+        - tool_pattern: "mcp_fetch_get"
+          rank: 0
+          reason: "HTTP GET requests are read-only"
+        - tool_pattern: "mcp_fetch_post"
+          rank: 2
+          reason: "HTTP POST requests require approval"
+
+    - name: diff
+      enabled: false
+      transport: docker
+      image: mcp-diff:local
+      network_mode: none
+      policies:
+        - tool_pattern: "mcp_diff_*"
+          rank: 0
+          reason: "Diff operations are safe and non-destructive"
+
+    - name: graphql
+      enabled: false
+      transport: docker
+      image: mcp-graphql:local
+      network_mode: mcp-graphql-net
+      proxy_subnet: "172.28.6.0/24"
+      args:
+        - -endpoint
+        - "${GRAPHQL_ENDPOINT}"
+      policies:
+        - tool_pattern: "mcp_graphql_graphql_query"
+          rank: 1
+          reason: "GraphQL queries are read-only and visible"
+        - tool_pattern: "mcp_graphql_graphql_introspect"
+          rank: 0
+          reason: "Schema introspection is safe"
+        - tool_pattern: "mcp_graphql_graphql_describe_type"
+          rank: 0
+          reason: "Type inspection is safe"
+        - tool_pattern: "mcp_graphql_graphql_mutate"
+          rank: 2
+          reason: "GraphQL mutations require approval"
+
+    - name: netbox
+      transport: docker
+      image: mcp-netbox:local
+      network_mode: mcp-netbox-net
+      proxy_subnet: "172.28.3.0/24"
+      args:
+        - -base-url
+        - "${NETBOX_BASE_URL}"
+        - -token
+        - "${NETBOX_TOKEN}"
+      allowed_domains:
+        - netbox.example.org
+      policies:
+        - tool_pattern: "mcp_netbox_get_*"
+          rank: 0
+          reason: "Netbox read operations are safe"
+        - tool_pattern: "mcp_netbox_introspect"
+          rank: 0
+          reason: "Schema introspection is safe"
+        - tool_pattern: "mcp_netbox_query"
+          rank: 0
+          reason: "Raw GraphQL queries are read-only"
+
+    - name: prometheus
+      enabled: false
+      transport: docker
+      image: mcp-promql:local
+      network_mode: mcp-prometheus-net
+      proxy_subnet: "172.28.5.0/24"
+      args:
+        - -base-url
+        - "${PROMETHEUS_BASE_URL}"
+      policies:
+        - tool_pattern: "mcp_prometheus_*"
+          rank: 0
+          reason: "All Prometheus queries are read-only"
+
+    - name: zulip-mcp
+      transport: docker
+      image: mcp-zulip:local
+      network_mode: mcp-zulip-net
+      proxy_subnet: "172.28.4.0/24"
+      volumes:
+        - type: volume
+          source: mcp-workspace
+          target: /mcp/root
+          read_only: false
+      allowed_domains:
+        - zulip.example.org
+      args:
+        - -base-url
+        - "${ZULIP_MCP_BASE_URL}"
+        - -email
+        - "${ZULIP_MCP_EMAIL}"
+        - -api-key
+        - "${ZULIP_MCP_API_KEY}"
+        - -attachment-dir
+        - /mcp/root/attachments
+      policies:
+        - tool_pattern: "mcp_zulip-mcp_zulip_download_attachment"
+          rank: 0
+          reason: "Downloading attachments to shared filesystem is non-destructive"
+        - tool_pattern: "mcp_zulip-mcp_zulip_get_*"
+          rank: 0
+          reason: "Reading Zulip data is safe"
+        - tool_pattern: "mcp_zulip-mcp_zulip_list_*"
+          rank: 0
+          reason: "Listing Zulip data is safe"
+        - tool_pattern: "mcp_zulip-mcp_zulip_send_message"
+          rank: 2
+          reason: "Sending Zulip messages requires approval"
+        - tool_pattern: "mcp_zulip-mcp_zulip_*"
+          rank: 1
+          reason: "Other Zulip operations are visible"
+
+    - name: trello
+      transport: docker
+      image: mcp-trello:local
+      network_mode: agent-external
+      args:
+        - -api-key
+        - "${TRELLO_API_KEY}"
+        - -token
+        - "${TRELLO_TOKEN}"
+        - -allowed-boards
+        - "${TRELLO_BOARDS}"
+      allowed_domains:
+        - trello.com
+      policies:
+        # Read-only tools — Silent (rank 0)
+        - tool_pattern: "mcp_trello_get_member"
+          rank: 0
+          reason: "Read-only member lookup"
+        - tool_pattern: "mcp_trello_list_boards"
+          rank: 0
+          reason: "Read-only board listing"
+        - tool_pattern: "mcp_trello_get_board"
+          rank: 0
+          reason: "Read-only board lookup"
+        - tool_pattern: "mcp_trello_get_board_members"
+          rank: 0
+          reason: "Read-only"
+        - tool_pattern: "mcp_trello_get_board_labels"
+          rank: 0
+          reason: "Read-only"
+        - tool_pattern: "mcp_trello_list_lists"
+          rank: 0
+          reason: "Read-only"
+        - tool_pattern: "mcp_trello_list_cards_on_board"
+          rank: 0
+          reason: "Read-only"
+        - tool_pattern: "mcp_trello_list_cards_on_list"
+          rank: 0
+          reason: "Read-only"
+        - tool_pattern: "mcp_trello_get_card"
+          rank: 0
+          reason: "Read-only"
+        - tool_pattern: "mcp_trello_get_card_members"
+          rank: 0
+          reason: "Read-only"
+        - tool_pattern: "mcp_trello_get_card_attachments"
+          rank: 0
+          reason: "Read-only"
+        - tool_pattern: "mcp_trello_get_card_checklists"
+          rank: 0
+          reason: "Read-only"
+        - tool_pattern: "mcp_trello_get_card_comments"
+          rank: 0
+          reason: "Read-only"
+        # Write tools — Request (rank 2)
+        - tool_pattern: "mcp_trello_create_card"
+          rank: 2
+          reason: "Creates a card in Trello"
+        - tool_pattern: "mcp_trello_update_card"
+          rank: 2
+          reason: "Modifies an existing card"
+        - tool_pattern: "mcp_trello_move_card"
+          rank: 2
+          reason: "Moves a card between lists"
+        - tool_pattern: "mcp_trello_archive_card"
+          rank: 2
+          reason: "Archives a card"
+        - tool_pattern: "mcp_trello_delete_card"
+          rank: 2
+          reason: "Permanently deletes a card"
+        - tool_pattern: "mcp_trello_create_checklist"
+          rank: 2
+          reason: "Creates a checklist on a card"
+        - tool_pattern: "mcp_trello_add_checklist_item"
+          rank: 2
+          reason: "Adds an item to a checklist"
+        - tool_pattern: "mcp_trello_update_checklist_item"
+          rank: 2
+          reason: "Checks or unchecks a checklist item"
+        - tool_pattern: "mcp_trello_delete_checklist"
+          rank: 2
+          reason: "Deletes a checklist"
+        - tool_pattern: "mcp_trello_add_comment"
+          rank: 2
+          reason: "Posts a comment to a card"
+        - tool_pattern: "mcp_trello_delete_comment"
+          rank: 2
+          reason: "Deletes a comment"
+        - tool_pattern: "mcp_trello_add_label_to_card"
+          rank: 2
+          reason: "Applies a label to a card"
+        - tool_pattern: "mcp_trello_remove_label_from_card"
+          rank: 2
+          reason: "Removes a label from a card"
+        - tool_pattern: "mcp_trello_create_label"
+          rank: 2
+          reason: "Creates a new label on a board"
+        - tool_pattern: "mcp_trello_assign_member_to_card"
+          rank: 2
+          reason: "Assigns a member to a card"
+        - tool_pattern: "mcp_trello_remove_member_from_card"
+          rank: 2
+          reason: "Removes a member from a card"
+        - tool_pattern: "mcp_trello_add_url_attachment"
+          rank: 2
+          reason: "Attaches a URL to a card"
+        - tool_pattern: "mcp_trello_create_list"
+          rank: 2
+          reason: "Creates a new list on a board"
+        - tool_pattern: "mcp_trello_archive_list"
+          rank: 2
+          reason: "Archives a list"
+
+    - name: shell
+      transport: docker
+      image: mcp-shell:local
+      network_mode: mcp-shell-net
+      proxy_subnet: "172.28.1.0/24"
+      allowed_domains:
+        - github.com
+        - raw.githubusercontent.com
+        - pypi.org
+        - files.pythonhosted.org
+        - registry.npmjs.org
+        - crates.io
+        - deb.debian.org
+        - security.debian.org
+        - archive.ubuntu.com
+        - security.ubuntu.com
+      volumes:
+        - type: volume
+          source: mcp-shell-workspace
+          target: /workspace
+          read_only: false
+      policies:
+        - tool_pattern: "mcp_shell_run_command"
+          rank: 2
+          reason: "Shell commands require explicit approval"
+
+compaction:
+  enabled: true
+  max_tokens: 150000
+  compact_threshold: 30000
+  strategy: summarize
+  keep_recent: 5
+
+agents:
+  enabled: true
+  max_concurrent: 48
+  share_context: false
+
+logging:
+  level: info
+  log_file: /app/logs/app.log
+
+trace:
+  enabled: true
+  dir: /app/traces
+
+permissions:
+  default_rank: 2
+  audit_log: true
+  audit_log_path: /app/logs/audit.log
+  policy_file: /app/logs/permissions.yaml
+
+prompts:
+  override_dir: /root/.config/chat-tui/prompts
+

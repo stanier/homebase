@@ -1,0 +1,8 @@
+[Unit]
+Description=Build stoa inference-gateway image
+
+[Build]
+ImageTag=localhost/stoa-inference-gateway
+File=Containerfile
+Target=inference-gateway
+SetWorkingDirectory=/srv/containers/container-files/stoa

@@ -41,6 +41,11 @@ conventions before making changes.
 - A host only runs the services listed in its `containerapps_quadlet_services`
   (`host_vars`, in `../ansible-playbooks`) — adding a subdirectory here
   doesn't deploy it anywhere until that list is updated too.
+- Don't bind-mount the host's Podman socket into a container without
+  calling it out prominently in that service's own README — it's
+  equivalent to root-adjacent access to the host. `stoa`'s `agentd` is the
+  one deliberate exception (it needs to spin up sandboxed MCP tool
+  containers), and only mounts it read-only.
 
 ## Before making changes
 

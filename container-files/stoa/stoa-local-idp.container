@@ -1,0 +1,22 @@
+[Unit]
+Description=Stoa local-idp (local OIDC provider -- credential store, reachable only by authd)
+After=network-online.target stoa-postgres-localidp.service stoa-migrate-localidp.service
+Wants=network-online.target
+Requires=stoa-postgres-localidp.service stoa-migrate-localidp.service
+
+[Container]
+Image=stoa-local-idp.build
+Network=stoa-db-localidp.network
+Network=stoa-idp.network
+NetworkAlias=local-idp
+PublishPort=9999:9999
+Environment=LOCAL_IDP_CLIENT_ID=stoa
+# LOCAL_IDP_DATABASE_URL, LOCAL_IDP_ISSUER, LOCAL_IDP_EXTERNAL_URL,
+# LOCAL_IDP_REDIRECT_URIS, AUTHD_OAUTH_LOCAL_CLIENT_SECRET come from .env.
+EnvironmentFile=/srv/containers/container-files/stoa/.env
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

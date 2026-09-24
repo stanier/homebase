@@ -1,0 +1,8 @@
+[Unit]
+Description=Build stoa apikeyd image
+
+[Build]
+ImageTag=localhost/stoa-apikeyd
+File=Containerfile
+Target=apikeyd
+SetWorkingDirectory=/srv/containers/container-files/stoa

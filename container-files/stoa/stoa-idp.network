@@ -1,0 +1,6 @@
+[Unit]
+Description=Stoa authd <-> local-idp OIDC network (internal -- local-idp has no other path)
+
+[Network]
+NetworkName=idp-net
+Internal=true

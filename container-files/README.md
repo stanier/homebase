@@ -52,6 +52,7 @@ A host only runs the services listed for it in
 | `gitea-runner` | Gitea Actions CI runner (`act_runner`) |
 | `code-server` | Browser-based VS Code |
 | `roundcube` + `dovecot` | Webmail + IMAP/LMTP (pairs with native Postfix, see `ansible-playbooks/roles/mail_server`) |
+| `stoa` | AI agent platform (`agentd` + `webd` + auth stack) -- see `stoa/README.md` for scope and setup |
 | `grafana` | Dashboards |
 | `influxdb` | Time-series metrics store |
 | `victoriametrics` | Time-series metrics store (Prometheus-remote-write compatible) |
@@ -87,14 +88,18 @@ yet added.
   connect cross-host. `alerting` mixes the two: Alertmanager and the
   Matrix receiver share `alerting.network`, while `vmalert` runs
   `Network=host` to reach VictoriaMetrics and Alertmanager over
-  loopback.
+  loopback. `stoa` goes further still: multiple dedicated
+  networks per trust boundary (one shared external-facing network, one
+  auth-internal network, one internal network per service/Postgres pair)
+  because it's proxying LLM traffic and running agent-directed tool
+  execution -- see `stoa/README.md`.
 - Named volumes (`Volume=<service>_<name>:/path`) are Podman-managed and
   host-local; bind mounts under `/srv/containers/container-files/...`
   come from this repo's sync. A few services (`gitea`'s
-  `/srv/gitea/{data,config}`, `dovecot`'s `/srv/dovecot/...`) deliberately
-  bind-mount *outside* the synced tree — that data would otherwise be
-  destroyed by the `containerapps_source=local` rsync's `--delete` on
-  every deploy.
+  `/srv/gitea/{data,config}`, `dovecot`'s `/srv/dovecot/...`, `stoa`'s
+  `/srv/stoa/...`) deliberately bind-mount *outside* the synced tree —
+  that data would otherwise be destroyed by the
+  `containerapps_source=local` rsync's `--delete` on every deploy.
 
 ## Making a change
 

@@ -1,0 +1,8 @@
+[Unit]
+Description=Build stoa webd image
+
+[Build]
+ImageTag=localhost/stoa-webd
+File=Containerfile
+Target=webd
+SetWorkingDirectory=/srv/containers/container-files/stoa

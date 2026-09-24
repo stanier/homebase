@@ -1,0 +1,32 @@
+[Unit]
+Description=Stoa inference-gateway (LLM API proxy for downstream apps, authenticated via apikeyd)
+After=network-online.target stoa-apikeyd.service
+Wants=network-online.target
+Requires=stoa-apikeyd.service
+
+[Container]
+Image=stoa-inference-gateway.build
+Network=stoa-external.network
+NetworkAlias=inference-gateway
+PublishPort=8080:8080
+# Create these once per host: podman secret create venice_api_key -,
+# podman secret create arcee_api_key -, podman secret create openrouter_api_key -
+# Only needed for the upstreams actually enabled in inference-gateway.yaml.
+Secret=venice_api_key,type=mount,target=/run/secrets/venice_api_key
+Secret=arcee_api_key,type=mount,target=/run/secrets/arcee_api_key
+Secret=openrouter_api_key,type=mount,target=/run/secrets/openrouter_api_key
+Environment=VENICE_API_KEY_FILE=/run/secrets/venice_api_key
+Environment=ARCEE_API_KEY_FILE=/run/secrets/arcee_api_key
+Environment=OPENROUTER_API_KEY_FILE=/run/secrets/openrouter_api_key
+Volume=/srv/containers/container-files/stoa/data/config/inference-gateway.yaml:/etc/inference-gateway/config.yaml:ro,z
+Exec=-config /etc/inference-gateway/config.yaml
+HealthCmd=wget -qO- http://localhost:8080/healthz || exit 1
+HealthInterval=10s
+HealthTimeout=5s
+HealthRetries=6
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

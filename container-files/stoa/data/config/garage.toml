@@ -1,0 +1,16 @@
+metadata_dir = "/var/lib/garage/meta"
+data_dir     = "/var/lib/garage/data"
+
+# Single-node: no replication needed.
+replication_factor = 1
+
+rpc_bind_addr = "[::]:3901"
+# rpc_secret is injected via GARAGE_RPC_SECRET env var (see docker-compose.yml).
+
+[s3_api]
+s3_region     = "garage"
+api_bind_addr = "0.0.0.0:3900"
+
+[admin]
+api_bind_addr = "0.0.0.0:3903"
+# admin_token is injected via GARAGE_ADMIN__ADMIN_TOKEN env var (see docker-compose.yml).

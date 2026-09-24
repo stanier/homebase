@@ -1,0 +1,6 @@
+[Unit]
+Description=Stoa agentd <-> its Postgres (internal -- no internet route)
+
+[Network]
+NetworkName=agentd-db-net
+Internal=true
