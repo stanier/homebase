@@ -7,7 +7,8 @@ After=stoa-local-idp-build.service
 ImageTag=localhost/stoa-inference-gateway
 File=Containerfile
 Target=inference-gateway
-SetWorkingDirectory=/srv/containers/container-files/stoa
+# See stoa-apikeyd.build's comment.
+SetWorkingDirectory=https://github.com/stanier/stoa.git#main
 
 # See stoa-apikeyd.build's comment.
 [Service]

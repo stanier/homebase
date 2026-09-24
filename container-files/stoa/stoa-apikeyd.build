@@ -16,7 +16,16 @@ After=stoa-agentd-build.service
 ImageTag=localhost/stoa-apikeyd
 File=Containerfile
 Target=apikeyd
-SetWorkingDirectory=/srv/containers/container-files/stoa
+# A git URL here (rather than a local path onto the synced
+# container-files tree) is deliberate: the Containerfile's COPY
+# instructions need stoa's actual application source (go.mod, cmd/,
+# internal/, web/, ...), which this repo never vendors -- container-files
+# only holds Quadlet units/config, not application code (see
+# container-files/AGENTS.md). podman build clones this URL fresh as the
+# build context on every build; #main floats with upstream's default
+# branch -- pin to a specific commit instead if these builds ever need to
+# stop moving when upstream does.
+SetWorkingDirectory=https://github.com/stanier/stoa.git#main
 
 # 90s (systemd's DefaultTimeoutStartSec) isn't remotely enough for a cold
 # multi-binary Go compile -- this is what actually caused "A dependency

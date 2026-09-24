@@ -3,9 +3,17 @@
 Quadlet units for [stoa](https://github.com/stanier/stoa), an AI agent
 platform (`agentd`), its Svelte web UI (`webd`), and the auth stack that
 fronts both (`authd` + `local-idp` + `apikeyd` + per-service Postgres).
-Vendored from stoa's own `compose.yaml`/`Containerfile` at the point this
-was added -- re-diff against upstream occasionally, especially the
-`Containerfile`'s build stages.
+Ported from stoa's own `compose.yaml` at the point this was added --
+re-diff against upstream occasionally.
+
+This directory does **not** vendor stoa's application source or
+Containerfile -- `container-files` only holds Quadlet units/config, not
+app code (see `container-files/AGENTS.md`). Each `stoa-*.build` unit's
+`SetWorkingDirectory=` instead points `podman build` straight at
+`https://github.com/stanier/stoa.git#main` as a live git-context build:
+Podman clones it fresh on every build. `#main` floats with upstream's
+default branch; pin to a specific commit there instead if these builds
+ever need to stop moving when upstream does.
 
 ## Scope
 

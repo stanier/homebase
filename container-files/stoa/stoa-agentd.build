@@ -5,7 +5,10 @@ Description=Build stoa agentd image
 ImageTag=localhost/stoa-agentd
 File=Containerfile
 Target=agentd
-SetWorkingDirectory=/srv/containers/container-files/stoa
+# A URL here tells podman build to clone this as the build context
+# instead of using a local directory -- see stoa-apikeyd.build's comment
+# for why this isn't a local path onto the synced container-files tree.
+SetWorkingDirectory=https://github.com/stanier/stoa.git#main
 
 # First in the build chain (see stoa-apikeyd.build's After= for why these
 # 7 .build units are ordered relative to each other at all) -- pays for
