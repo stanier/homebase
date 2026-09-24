@@ -1,0 +1,7 @@
+---
+- name: Enroll host with the Wazuh manager
+  hosts: all
+  become: true
+
+  roles:
+    - wazuh_agent

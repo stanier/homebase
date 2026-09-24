@@ -1,0 +1,5 @@
+---
+base_domain: fixture.internal
+foo_password: "{{ vault_foo }}"
+bar_token: "{{ vault_bar }}"
+baz_secret: "{{ vault_baz }}"

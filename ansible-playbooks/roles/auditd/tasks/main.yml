@@ -1,0 +1,36 @@
+---
+- name: Install audit package
+  ansible.builtin.package:
+    name: audit
+    state: present
+  when: auditd_enabled
+
+- name: Configure baseline audit rules
+  ansible.builtin.template:
+    src: homebase.rules.j2
+    dest: /etc/audit/rules.d/homebase.rules
+    owner: root
+    group: root
+    mode: "0640"
+  when: auditd_enabled
+  notify: reload audit rules
+
+- name: Ensure auditd is enabled and running
+  ansible.builtin.systemd:
+    name: auditd
+    state: started
+    enabled: true
+  when: auditd_enabled
+
+- name: Remove baseline audit rules when disabled
+  # Leaves the audit package installed -- removing it on RHEL-family
+  # hosts is often blocked/inadvisable (it's frequently a dependency of
+  # other security tooling); disabling the service is the safe "off"
+  # state, same pattern as roles/logging's teardown.
+  ansible.builtin.file:
+    path: /etc/audit/rules.d/homebase.rules
+    state: absent
+  when: not auditd_enabled
+  notify:
+    - reload audit rules
+    - disable auditd

@@ -43,11 +43,55 @@ proxmox_api_timeout: 30
 # dir; repoint it if proxmox_storage_pool is ever something else.
 proxmox_image_staging_dir: /var/lib/vz/import
 
-# proxmox_templates (the key -> {image_url, vmid, ostype, ssh_user} map
-# consumed by build_templates.yml/build_template.yml/legacy_create_vm.yml) has
-# no default here -- it lives per-environment in
+# Packages baked into the staged image (via virt-customize) before it's
+# imported as a template's boot disk, keyed by each template's own
+# os_family (see proxmox_templates' os_family field). Every clone of
+# that template then already has these on first boot, instead of paying
+# their install cost (repo metadata + download) again on every single
+# VM every time the common/node_exporter/auditd roles run.
+#
+# Deliberately only packages that are (a) on-by-default for literally
+# every host regardless of group -- see common/tasks/version_control.yml,
+# acl.yml, enable_epel.yml, and node_exporter_enabled/auditd_enabled's
+# defaults -- and (b) a plain package install with no per-host state
+# tied to the moment of installation. tailscale/firewalld/wazuh-agent
+# are deliberately left out: the first two default to disabled and are
+# opt-in per host (baking them into every template would install unused
+# daemons on hosts that never enable them), and wazuh-agent's %post
+# script does live enrollment against the manager using install-time
+# env vars, so pre-baking it would decouple "installed" from "enrolled"
+# in a way roles/wazuh_agent doesn't expect.
+#
+# Order matters within each list -- virt-customize runs --install
+# operations in the order given, and epel-release has to land before
+# node-exporter can be resolved from it.
+#
+# The relevant Ansible roles still own configuration/state (services,
+# config files, enable/disable) and still run their own package task
+# every time -- against an already-installed package that's just a fast
+# no-op check, not a real install.
+proxmox_template_bake_packages:
+  RedHat:
+    - epel-release
+    - git
+    - acl
+    - audit
+    - node-exporter
+  Debian:
+    - git
+    - acl
+    - audit
+    - prometheus-node-exporter
+
+# proxmox_templates (the key -> {image_url, vmid, ostype, ssh_user,
+# os_family} map consumed by
+# build_templates.yml/build_template.yml/legacy_create_vm.yml) has no
+# default here -- it lives per-environment in
 # inventory/<env>/group_vars/proxmox/templates.yml, so testzone and
 # dangerzone can each maintain their own set of golden templates.
+# os_family must be one of proxmox_template_bake_packages' keys above
+# (RedHat/Debian) -- build_template.yml's baking step is skipped
+# entirely for a template whose os_family isn't in that map.
 
 # Display type legacy_create_vm.yml sets on every new clone -- deliberately
 # different from the template's own vga: serial0 (build_template.yml),

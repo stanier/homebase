@@ -1,0 +1,497 @@
+// Package catalog encodes what ansible-playbooks/docs/VAULT.md documents by
+// hand: for each vault_* var, how (or whether) a value can be generated,
+// what consumes it, and any special handling (shared across environments,
+// per-host, paired with another secret). The scan engine works fine
+// without a catalog entry for a given var (it just can't offer generation
+// or a description) -- this only adds the helpful metadata on top.
+package catalog
+
+import (
+	"regexp"
+
+	"homebase/installer/internal/generate"
+)
+
+type Strategy int
+
+const (
+	// StrategyRandomBase64 generates N random bytes and base64-encodes
+	// them, e.g. `openssl rand -base64 N`.
+	StrategyRandomBase64 Strategy = iota
+	// StrategySha512Crypt shells out to `openssl passwd -6` (a
+	// crypt(3) SHA-512 hash), matching VAULT.md's documented
+	// `mkpasswd -m sha-512` / `openssl passwd -6` convention.
+	StrategySha512Crypt
+	// StrategyExternalCmd needs a specific external tool this package
+	// doesn't reimplement (e.g. the Wazuh indexer image's own
+	// hash.sh). ExternalCmdHint documents what to run; DependsOn, if
+	// set, names another SecretSpec whose generated plaintext value
+	// should be piped into that command.
+	StrategyExternalCmd
+	// StrategyImportOnly has no generation hook at all -- the value
+	// comes from somewhere outside this tool's control (a UI, another
+	// system's admin console, an offline CA) and must be pasted in.
+	StrategyImportOnly
+)
+
+// SecretSpec describes one vault_* variable or a family of them sharing a
+// naming pattern (e.g. vault_mail_<name>_password_hash, one per mailbox).
+type SecretSpec struct {
+	// Name is the exact vault_ key. Empty when Pattern is set instead.
+	Name string
+	// Pattern matches instance-specific vault_ keys that don't have a
+	// single fixed name (e.g. one per mailbox, one per Proxmox node).
+	Pattern *regexp.Regexp
+
+	Description string
+	ConsumedBy  string
+	Strategy    Strategy
+
+	// RandomBytes is the byte count for StrategyRandomBase64 (before
+	// base64 expansion). Zero means "use a sensible default" (32).
+	RandomBytes int
+
+	// ExternalCmdHint / ImportHint are shown to the operator verbatim
+	// -- the exact command or manual step VAULT.md documents.
+	ExternalCmdHint string
+	ImportHint      string
+
+	// ExternalCmdArgv is ExternalCmdHint's machine-runnable form, for
+	// StrategyExternalCmd entries generate.External can actually
+	// execute: argv[0] is the binary, and generate.PasswordPlaceholder
+	// marks where DependsOn's plaintext value gets substituted. Left
+	// nil for entries only ever meant to be read by a human (most
+	// StrategyImportOnly hints).
+	ExternalCmdArgv []string
+
+	// DependsOn names another SecretSpec (by Name) whose plaintext
+	// value this one needs, e.g. a password-hash var that hashes an
+	// already-generated password var.
+	DependsOn string
+
+	// SharedAcrossEnvs means testzone and dangerzone are meant to
+	// hold the identical value (e.g. the offline root CA, the
+	// appdeploy CI key) -- the TUI should offer "copy from the other
+	// environment" instead of generating a second, divergent value.
+	SharedAcrossEnvs bool
+
+	// PerHostGroup names the inventory group this secret is scoped
+	// to one-per-host within (e.g. "proxmox" for the Proxmox API
+	// token secrets), rather than one value for the whole
+	// environment.
+	PerHostGroup string
+
+	// Critical flags secrets whose loss is unrecoverable (e.g. the
+	// restic backup password) -- the TUI should nudge the operator to
+	// also keep a copy outside the vault (password manager), not just
+	// generate-and-forget.
+	Critical bool
+}
+
+func rb(n int) int { return n }
+
+// wazuhIndexerHashArgv is the argv form of the two Wazuh password-hash
+// entries' ExternalCmdHint -- see roles/wazuh_agent and VAULT.md's Wazuh
+// section for why this specific image/tool/version.
+var wazuhIndexerHashArgv = []string{
+	"podman", "run", "--rm",
+	"--entrypoint", "/usr/share/wazuh-indexer/plugins/opensearch-security/tools/hash.sh",
+	"wazuh/wazuh-indexer:4.14.7",
+	"-p", generate.PasswordPlaceholder,
+}
+
+// exact holds every fixed-name vault_ var confirmed either in VAULT.md or
+// live in the real testzone/dangerzone inventories.
+var exact = []SecretSpec{
+	{
+		Name:        "vault_root_password_hash",
+		Description: "Root password hash, set on every host by roles/common.",
+		ConsumedBy:  "roles/common (root_password_hash)",
+		Strategy:    StrategySha512Crypt,
+	},
+	{
+		Name:        "vault_adguardhome_admin_password_hash",
+		Description: "AdGuardHome's own admin login, pre-seeded so first-run setup is skipped.",
+		ConsumedBy:  "container-files/adguardhome via containerapps_secret_files",
+		Strategy:    StrategySha512Crypt,
+	},
+	{
+		Name:        "vault_caddy_intermediate_key",
+		Description: "EC private key for this environment's Caddy intermediate CA, pinned so container-sandbox rebuilds don't mint a new one.",
+		ConsumedBy:  "container-files/caddy/data/intermediate.key",
+		Strategy:    StrategyImportOnly,
+		ImportHint:  "generated by ansible-playbooks/scripts/generate_ca_chain.sh -- run it, then paste the printed intermediate key here (one per environment, not shared).",
+	},
+	{
+		Name:        "vault_gitea_internal_token",
+		Description: "Gitea's internal API auth token.",
+		ConsumedBy:  "host_vars/gitea.yml templated app.ini",
+		Strategy:    StrategyImportOnly,
+		ImportHint:  "pin to Gitea's existing live value if one already exists -- rotating invalidates internal API auth. Generate a fresh one only for a brand-new gitea instance (Gitea creates this itself on first run; copy it out of app.ini).",
+	},
+	{
+		Name:        "vault_gitea_lfs_jwt_secret",
+		Description: "Gitea's LFS transfer auth secret.",
+		ConsumedBy:  "host_vars/gitea.yml templated app.ini",
+		Strategy:    StrategyImportOnly,
+		ImportHint:  "pin to Gitea's existing live value -- rotating invalidates outstanding LFS transfer tokens.",
+	},
+	{
+		Name:        "vault_gitea_oauth2_jwt_secret",
+		Description: "Gitea's OAuth2 signing secret.",
+		ConsumedBy:  "host_vars/gitea.yml templated app.ini",
+		Strategy:    StrategyImportOnly,
+		ImportHint:  "pin to Gitea's existing live value -- rotating invalidates outstanding OAuth2 tokens.",
+	},
+	{
+		Name:        "vault_pages_forge_api_token",
+		Description: "pages-server's Gitea API token.",
+		ConsumedBy:  "containerapps_env.pages (FORGE_API_TOKEN)",
+		Strategy:    StrategyImportOnly,
+		ImportHint:  "Gitea has no API for creating tokens -- create one by hand under keyton's Settings > Applications.",
+	},
+	{
+		Name:        "vault_dns_acme_tsig_secret",
+		Description: "RFC2136 TSIG key shared between pages-server's ACME DNS-01 solver and BIND's dns/ zone.",
+		ConsumedBy:  "containerapps_env.pages + dns/ zone config",
+		Strategy:    StrategyRandomBase64,
+		RandomBytes: rb(32),
+	},
+	{
+		Name:        "vault_influxdb_admin_password",
+		Description: "InfluxDB init admin password.",
+		ConsumedBy:  "containerapps_env.influxdb",
+		Strategy:    StrategyRandomBase64,
+		RandomBytes: rb(24),
+	},
+	{
+		Name:        "vault_influxdb_admin_token",
+		Description: "InfluxDB init admin token, also reused by Grafana's datasource provisioning to query InfluxDB.",
+		ConsumedBy:  "containerapps_env.influxdb + Grafana datasource provisioning",
+		Strategy:    StrategyRandomBase64,
+		RandomBytes: rb(32),
+	},
+	{
+		Name:        "vault_grafana_admin_password",
+		Description: "Grafana admin login.",
+		ConsumedBy:  "containerapps_env.grafana",
+		Strategy:    StrategyRandomBase64,
+		RandomBytes: rb(24),
+	},
+	{
+		Name:        "vault_code_server_password",
+		Description: "code-server login password.",
+		ConsumedBy:  "containerapps_env.code-server",
+		Strategy:    StrategyRandomBase64,
+		RandomBytes: rb(24),
+	},
+	{
+		Name:        "vault_authentik_pg_password",
+		Description: "Authentik's Postgres password.",
+		ConsumedBy:  "containerapps_env.authentik (POSTGRES_PASSWORD / AUTHENTIK_POSTGRESQL__PASSWORD)",
+		Strategy:    StrategyRandomBase64,
+		RandomBytes: rb(24),
+	},
+	{
+		Name:        "vault_authentik_secret_key",
+		Description: "Authentik's Django SECRET_KEY.",
+		ConsumedBy:  "containerapps_env.authentik (AUTHENTIK_SECRET_KEY)",
+		Strategy:    StrategyRandomBase64,
+		RandomBytes: rb(50),
+	},
+	{
+		Name:        "vault_authentik_bootstrap_password",
+		Description: "Authentik's bootstrap admin password.",
+		ConsumedBy:  "containerapps_env.authentik (AUTHENTIK_BOOTSTRAP_PASSWORD)",
+		Strategy:    StrategyRandomBase64,
+		RandomBytes: rb(24),
+	},
+	{
+		Name:        "vault_authentik_bootstrap_token",
+		Description: "Authentik's bootstrap API token.",
+		ConsumedBy:  "containerapps_env.authentik (AUTHENTIK_BOOTSTRAP_TOKEN)",
+		Strategy:    StrategyRandomBase64,
+		RandomBytes: rb(32),
+	},
+	{
+		Name:        "vault_freeipa_ds_password",
+		Description: "FreeIPA Directory Manager (389 DS root) password.",
+		ConsumedBy:  "roles/freeipa (ipa-server-install)",
+		Strategy:    StrategyRandomBase64,
+		RandomBytes: rb(24),
+	},
+	{
+		Name:        "vault_freeipa_admin_password",
+		Description: "FreeIPA admin Kerberos/IPA principal password.",
+		ConsumedBy:  "roles/freeipa (ipa-server-install)",
+		Strategy:    StrategyRandomBase64,
+		RandomBytes: rb(24),
+	},
+	{
+		Name:        "vault_freeipa_keycloak_bind_password",
+		Description: "svc-keycloak-bind LDAP bind account password.",
+		ConsumedBy:  "roles/freeipa + Keycloak LDAP User Federation",
+		Strategy:    StrategyRandomBase64,
+		RandomBytes: rb(24),
+	},
+	{
+		Name:        "vault_freeipa_authentik_bind_password",
+		Description: "svc-authentik-bind LDAP bind account password.",
+		ConsumedBy:  "roles/freeipa + Authentik LDAP Source",
+		Strategy:    StrategyRandomBase64,
+		RandomBytes: rb(24),
+	},
+	{
+		Name:        "vault_keycloak_pg_password",
+		Description: "Keycloak's Postgres password.",
+		ConsumedBy:  "containerapps_env.keycloak, shared with the postgresql service",
+		Strategy:    StrategyRandomBase64,
+		RandomBytes: rb(24),
+	},
+	{
+		Name:        "vault_keycloak_bootstrap_password",
+		Description: "Keycloak's realm-admin bootstrap password.",
+		ConsumedBy:  "containerapps_env.keycloak (KC_BOOTSTRAP_ADMIN_PASSWORD)",
+		Strategy:    StrategyRandomBase64,
+		RandomBytes: rb(24),
+	},
+	{
+		Name:             "vault_appdeploy_ci_private_key",
+		Description:      "Shared appdeploy CI SSH keypair (private half), forced-command restricted to running deploy.sh on app-host.",
+		ConsumedBy:       "roles/appdeploy, pushed into Gitea as a user-level Actions secret",
+		Strategy:         StrategyImportOnly,
+		ImportHint:       "ssh-keygen -t ed25519 -N '' -f /tmp/appdeploy_ci_ed25519 -C keyton@galahad -- vault the private half, delete the temp file, and copy the public half into appdeploy_ci_public_key in vars.yml.",
+		SharedAcrossEnvs: true,
+	},
+	{
+		Name:        "vault_gitea_ci_api_token",
+		Description: "Personal access token for pushing Actions secrets/variables into Gitea.",
+		ConsumedBy:  "roles/appdeploy (gitea_ci_integration.yml)",
+		Strategy:    StrategyImportOnly,
+		ImportHint:  "create under keyton's Settings > Applications > Generate New Token, scoped for Actions secrets/variables.",
+	},
+	{
+		Name:        "vault_backup_password",
+		Description: "restic repository encryption password. Losing this makes every existing backup unrecoverable.",
+		ConsumedBy:  "roles/backup",
+		Strategy:    StrategyRandomBase64,
+		RandomBytes: rb(32),
+		Critical:    true,
+	},
+	{
+		Name:        "vault_backup_aws_access_key_id",
+		Description: "S3 access key ID for the restic-backed backup bucket.",
+		ConsumedBy:  "roles/backup",
+		Strategy:    StrategyImportOnly,
+		ImportHint:  "create an access key/secret pair scoped to just the homelab-backups bucket from whichever provider hosts it.",
+	},
+	{
+		Name:        "vault_backup_aws_secret_access_key",
+		Description: "S3 secret access key for the restic-backed backup bucket.",
+		ConsumedBy:  "roles/backup",
+		Strategy:    StrategyImportOnly,
+		ImportHint:  "paired with vault_backup_aws_access_key_id -- same provider step.",
+	},
+	{
+		Name:        "vault_roundcube_des_key",
+		Description: "24-character key Roundcube uses to encrypt the IMAP password in its sqlite DB.",
+		ConsumedBy:  "containerapps_env.roundcube",
+		Strategy:    StrategyRandomBase64,
+		RandomBytes: rb(18),
+	},
+	{
+		Name:        "vault_trivy_token",
+		Description: "Trivy server-mode auth token.",
+		ConsumedBy:  "containerapps_env.trivy (TRIVY_TOKEN) + gitea-runner's --token",
+		Strategy:    StrategyRandomBase64,
+		RandomBytes: rb(32),
+	},
+	{
+		Name:        "vault_tailscale_authkey",
+		Description: "Tailscale auth key for enrolling a host into the tailnet.",
+		ConsumedBy:  "roles/tailscale",
+		Strategy:    StrategyImportOnly,
+		ImportHint:  "generate from the Tailscale admin console under Settings > Keys.",
+	},
+	{
+		Name:        "vault_wazuh_indexer_admin_password",
+		Description: "Wazuh indexer admin password (plaintext, also hashed below).",
+		ConsumedBy:  "containerapps_env.wazuh (INDEXER_PASSWORD)",
+		Strategy:    StrategyRandomBase64,
+		RandomBytes: rb(24),
+	},
+	{
+		Name:        "vault_wazuh_dashboard_password",
+		Description: "Wazuh dashboard password (plaintext, also hashed below).",
+		ConsumedBy:  "containerapps_env.wazuh (DASHBOARD_PASSWORD)",
+		Strategy:    StrategyRandomBase64,
+		RandomBytes: rb(24),
+	},
+	{
+		Name:        "vault_wazuh_api_password",
+		Description: "Wazuh API (wazuh-wui) password.",
+		ConsumedBy:  "containerapps_env.wazuh (API_PASSWORD)",
+		Strategy:    StrategyRandomBase64,
+		RandomBytes: rb(24),
+	},
+	{
+		Name:        "vault_wazuh_registration_password",
+		Description: "Wazuh agent enrollment password, shared between the manager's authd.pass and roles/wazuh_agent.",
+		ConsumedBy:  "containerapps_secret_files (wazuh) + roles/wazuh_agent",
+		Strategy:    StrategyRandomBase64,
+		RandomBytes: rb(24),
+	},
+	{
+		Name:            "vault_wazuh_indexer_admin_password_hash",
+		Description:     "bcrypt hash of vault_wazuh_indexer_admin_password for the indexer's internal_users.yml.",
+		ConsumedBy:      "containerapps_secret_files (wazuh internal_users.yml)",
+		Strategy:        StrategyExternalCmd,
+		DependsOn:       "vault_wazuh_indexer_admin_password",
+		ExternalCmdHint: "podman run --rm --entrypoint /usr/share/wazuh-indexer/plugins/opensearch-security/tools/hash.sh wazuh/wazuh-indexer:4.14.7 -p '<password>'",
+		ExternalCmdArgv: wazuhIndexerHashArgv,
+	},
+	{
+		Name:            "vault_wazuh_dashboard_password_hash",
+		Description:     "bcrypt hash of vault_wazuh_dashboard_password for the indexer's internal_users.yml.",
+		ConsumedBy:      "containerapps_secret_files (wazuh internal_users.yml)",
+		Strategy:        StrategyExternalCmd,
+		DependsOn:       "vault_wazuh_dashboard_password",
+		ExternalCmdHint: "podman run --rm --entrypoint /usr/share/wazuh-indexer/plugins/opensearch-security/tools/hash.sh wazuh/wazuh-indexer:4.14.7 -p '<password>'",
+		ExternalCmdArgv: wazuhIndexerHashArgv,
+	},
+	{
+		Name:        "vault_wazuh_root_ca_cert",
+		Description: "Wazuh-internal CA cert (bundle produced by wazuh-certs-tool.sh).",
+		ConsumedBy:  "containerapps_secret_files (wazuh, all three services)",
+		Strategy:    StrategyImportOnly,
+		ImportHint:  "run wazuh-certs-tool.sh naming nodes wazuh-indexer/wazuh-manager/wazuh-dashboard, then paste the root CA cert.",
+	},
+	{
+		Name:        "vault_wazuh_root_ca_key",
+		Description: "Wazuh-internal CA private key.",
+		ConsumedBy:  "not directly consumed by containers -- kept as the offline bootstrap record",
+		Strategy:    StrategyImportOnly,
+		ImportHint:  "same wazuh-certs-tool.sh run as vault_wazuh_root_ca_cert.",
+	},
+	{
+		Name:        "vault_wazuh_indexer_cert",
+		Description: "Wazuh indexer node cert.",
+		ConsumedBy:  "containerapps_secret_files (wazuh indexer)",
+		Strategy:    StrategyImportOnly,
+		ImportHint:  "same wazuh-certs-tool.sh run as vault_wazuh_root_ca_cert.",
+	},
+	{
+		Name:        "vault_wazuh_indexer_key",
+		Description: "Wazuh indexer node private key.",
+		ConsumedBy:  "containerapps_secret_files (wazuh indexer)",
+		Strategy:    StrategyImportOnly,
+		ImportHint:  "same wazuh-certs-tool.sh run as vault_wazuh_root_ca_cert.",
+	},
+	{
+		Name:        "vault_wazuh_manager_cert",
+		Description: "Wazuh manager node cert.",
+		ConsumedBy:  "containerapps_secret_files (wazuh manager)",
+		Strategy:    StrategyImportOnly,
+		ImportHint:  "same wazuh-certs-tool.sh run as vault_wazuh_root_ca_cert.",
+	},
+	{
+		Name:        "vault_wazuh_manager_key",
+		Description: "Wazuh manager node private key.",
+		ConsumedBy:  "containerapps_secret_files (wazuh manager)",
+		Strategy:    StrategyImportOnly,
+		ImportHint:  "same wazuh-certs-tool.sh run as vault_wazuh_root_ca_cert.",
+	},
+	{
+		Name:        "vault_wazuh_dashboard_cert",
+		Description: "Wazuh dashboard node cert.",
+		ConsumedBy:  "containerapps_secret_files (wazuh dashboard)",
+		Strategy:    StrategyImportOnly,
+		ImportHint:  "same wazuh-certs-tool.sh run as vault_wazuh_root_ca_cert.",
+	},
+	{
+		Name:        "vault_wazuh_dashboard_key",
+		Description: "Wazuh dashboard node private key.",
+		ConsumedBy:  "containerapps_secret_files (wazuh dashboard)",
+		Strategy:    StrategyImportOnly,
+		ImportHint:  "same wazuh-certs-tool.sh run as vault_wazuh_root_ca_cert.",
+	},
+	{
+		Name:        "vault_wazuh_admin_cert",
+		Description: "Wazuh admin client cert.",
+		ConsumedBy:  "containerapps_secret_files (wazuh indexer)",
+		Strategy:    StrategyImportOnly,
+		ImportHint:  "same wazuh-certs-tool.sh run as vault_wazuh_root_ca_cert.",
+	},
+	{
+		Name:        "vault_wazuh_admin_key",
+		Description: "Wazuh admin client private key.",
+		ConsumedBy:  "containerapps_secret_files (wazuh indexer)",
+		Strategy:    StrategyImportOnly,
+		ImportHint:  "same wazuh-certs-tool.sh run as vault_wazuh_root_ca_cert.",
+	},
+}
+
+// patterns holds instance-specific vault_ families: one per mailbox, one
+// per Proxmox node, one per personal FreeIPA account. Checked only after
+// an exact-name miss, so e.g. vault_freeipa_ds_password (an exact entry
+// above) never falls through to the vault_freeipa_<uid>_password pattern.
+var patterns = []SecretSpec{
+	{
+		Pattern:     regexp.MustCompile(`^vault_mail_[a-zA-Z0-9_]+_password_hash$`),
+		Description: "SHA512-CRYPT password hash for one virtual mailbox.",
+		ConsumedBy:  "host_vars/mail1.yml mail_server_virtual_mailboxes",
+		Strategy:    StrategySha512Crypt,
+	},
+	{
+		Pattern:      regexp.MustCompile(`^vault_[a-zA-Z0-9]+_proxmox_api_token_secret$`),
+		Description:  "Proxmox API token secret for one Proxmox node (not clustered -- each node has its own user/token database).",
+		ConsumedBy:   "roles/hypervisor (proxmox_api_token_secret) via host_vars/<node>.yml",
+		Strategy:     StrategyImportOnly,
+		ImportHint:   "Datacenter > Permissions > API Tokens on that node's own Proxmox web UI; uncheck Privilege Separation.",
+		PerHostGroup: "proxmox",
+	},
+	{
+		Pattern:     regexp.MustCompile(`^vault_freeipa_[a-zA-Z0-9_]+_password$`),
+		Description: "One-time bootstrap password for a personal FreeIPA account (forces a Kerberos password change at next login).",
+		ConsumedBy:  "host_vars/freeipa.yml freeipa_admin_users",
+		Strategy:    StrategyRandomBase64,
+		RandomBytes: rb(24),
+	},
+}
+
+// Lookup finds the SecretSpec for a vault_ name, checking exact matches
+// before patterns so a specific entry always wins over a broader family.
+func Lookup(name string) (SecretSpec, bool) {
+	for _, s := range exact {
+		if s.Name == name {
+			return s, true
+		}
+	}
+	for _, s := range patterns {
+		if s.Pattern.MatchString(name) {
+			return s, true
+		}
+	}
+	return SecretSpec{}, false
+}
+
+// All returns every catalog entry, exact names first, for documentation
+// or listing purposes.
+func All() []SecretSpec {
+	out := make([]SecretSpec, 0, len(exact)+len(patterns))
+	out = append(out, exact...)
+	out = append(out, patterns...)
+	return out
+}
+
+// LookupByVarsName finds the SecretSpec whose vars.yml plain name (the
+// name host_vars/containerapps_env and containerapps_secret_files
+// templates actually reference, e.g. "grafana_admin_password") is
+// varsName. Per VAULT.md's convention -- "Every secret is named
+// vault_<name> inside vault.yml, and referenced under its real name
+// from a plaintext vars file" -- that plain name is mechanically
+// "vault_" + varsName for every entry in this catalog, so this is just
+// Lookup("vault_"+varsName): no separate mapping to keep in sync.
+func LookupByVarsName(varsName string) (SecretSpec, bool) {
+	return Lookup("vault_" + varsName)
+}

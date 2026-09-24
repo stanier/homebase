@@ -1,0 +1,22 @@
+[Unit]
+Description=MinIO
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+# Docker Hub stopped receiving new free minio/minio pushes after
+# RELEASE.2025-10-15 -- this is the last tag published there before
+# that. Re-evaluate the image source (e.g. quay.io or a maintained
+# mirror) before bumping past it.
+Image=docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+EnvironmentFile=/srv/containers/container-files/minio/.env
+PublishPort=9002:9000
+PublishPort=9001:9001
+Volume=minio_minio_data:/data
+Exec=server /data --console-address ":9001"
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

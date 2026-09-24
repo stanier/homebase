@@ -6,6 +6,7 @@ nav = [
   { "Overview" = "index.md" },
   { "Services" = "services.md" },
   { "Networking" = "networking.md" },
+  { "Roadmap" = "roadmap.md" },
 ]
 
 [project.theme]

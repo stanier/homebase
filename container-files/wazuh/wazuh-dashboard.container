@@ -1,0 +1,45 @@
+[Unit]
+Description=Wazuh dashboard
+After=network-online.target wazuh-indexer.service wazuh-manager.service
+Wants=network-online.target
+Requires=wazuh-indexer.service
+
+[Container]
+Image=docker.io/wazuh/wazuh-dashboard:4.14.7
+Network=wazuh.network
+# 443 is Caddy's (Network=host on this same host) -- don't collide with
+# it. Front this with a Caddy vhost later if a real hostname is wanted;
+# for now it's reachable directly at https://<host>:8443.
+PublishPort=8443:5601
+Environment=WAZUH_API_URL=https://wazuh-manager
+EnvironmentFile=/srv/containers/container-files/wazuh/.env
+# wazuh.yml (the manager-API connection the dashboard uses) is
+# deliberately NOT mounted -- confirmed by reading the image's own
+# /wazuh_app_config.sh: it appends a `hosts:` block to this
+# already-persisted file itself, from WAZUH_API_URL/API_USERNAME/
+# API_PASSWORD (below), each time the container starts (idempotent --
+# it checks for a marker before appending). Hand-supplying the file
+# would just fight that script.
+Volume=wazuh_wazuh_dashboard_config:/usr/share/wazuh-dashboard/data/wazuh/config
+Volume=wazuh_wazuh_dashboard_custom:/usr/share/wazuh-dashboard/plugins/wazuh/public/assets/custom
+Volume=/srv/containers/container-files/wazuh/data/wazuh_dashboard/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml:ro,z
+# certs/ are containerapps_secret_files, not tracked here -- see
+# ansible-playbooks/docs/VAULT.md's Wazuh section. Destination path and
+# filenames confirmed against the actual image (`podman run --rm
+# --entrypoint ls wazuh/wazuh-dashboard:4.14.7 config/certs`) --
+# note it's config/certs, not a top-level certs/ dir.
+Volume=/srv/containers/container-files/wazuh/data/wazuh_dashboard/certs/root-ca.pem:/usr/share/wazuh-dashboard/config/certs/root-ca.pem:ro,z
+Volume=/srv/containers/container-files/wazuh/data/wazuh_dashboard/certs/dashboard.pem:/usr/share/wazuh-dashboard/config/certs/dashboard.pem:ro,z
+Volume=/srv/containers/container-files/wazuh/data/wazuh_dashboard/certs/dashboard-key.pem:/usr/share/wazuh-dashboard/config/certs/dashboard-key.pem:ro,z
+PodmanArgs=--memory=1g
+HealthCmd=curl -k -s -o /dev/null -w '%{http_code}' https://127.0.0.1:5601
+HealthInterval=30s
+HealthTimeout=5s
+HealthStartPeriod=90s
+HealthRetries=5
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

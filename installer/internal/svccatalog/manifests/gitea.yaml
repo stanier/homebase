@@ -1,0 +1,21 @@
+name: gitea
+description: Git hosting
+core: true
+dedicated_host: false
+network: ""
+ports:
+  - number: 3000
+    proto: tcp
+    note: web UI / API
+  - number: 2222
+    proto: tcp
+    note: git-over-SSH
+
+# No containerapps_env/secret_files -- gitea.container sets only two
+# static (non-secret) Environment= lines. Gitea's real secrets
+# (internal token, LFS/OAuth2 JWT signing) are wired through a
+# templated app.ini at an absolute containerapps_secret_files path
+# outside the synced container-files tree (see host_vars/gitea.yml and
+# VAULT.md's "gitea_internal_token" example) -- too host-specific to
+# generate generically yet, so it's left for hand setup after this
+# service is added, same as today.

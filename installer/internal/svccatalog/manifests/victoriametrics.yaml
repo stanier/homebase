@@ -1,0 +1,11 @@
+name: victoriametrics
+description: Time-series metrics store (Prometheus-remote-write compatible)
+core: true
+dedicated_host: false
+network: ""
+ports:
+  - number: 8428
+    proto: tcp
+
+# No secrets -- victoriametrics.container has no EnvironmentFile and no
+# auth configured in this repo's setup.

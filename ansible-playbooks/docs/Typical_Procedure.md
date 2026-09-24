@@ -29,6 +29,19 @@ the VM -- both clone from these same templates:
 ansible-playbook plays/vm/build_proxmox_templates.yml -i inventory/testzone --tags templates
 ```
 
+This also bakes `proxmox_template_bake_packages` (`roles/hypervisor/defaults/main.yml`)
+into the staged image via `virt-customize` before import, so every clone
+of the resulting template already has those packages on first boot
+instead of every VM re-installing them the first time the matching
+Ansible role runs. Needs `virt-customize` reaching the guest's package
+mirrors during the build (`--network`), so the Proxmox node itself needs
+working internet egress for this step -- if a template build ever
+starts failing only at the "bake baseline packages" task, check that
+before anything else. The Ansible roles that manage those packages
+(`common`, `node_exporter`, `auditd`, ...) are unchanged and still run
+every time -- against an already-installed package, that's just a fast
+no-op check, not a real install.
+
 Both testzone and dangerzone provision their VMs through `proxmox-tofu`
 now (see `../proxmox-tofu/README.md`) -- that's the supported default:
 

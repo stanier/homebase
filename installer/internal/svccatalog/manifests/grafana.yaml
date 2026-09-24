@@ -1,0 +1,12 @@
+name: grafana
+description: Dashboards
+core: true
+dedicated_host: false
+network: ""
+ports:
+  - number: 3000
+    proto: tcp
+
+env:
+  GF_SECURITY_ADMIN_PASSWORD: "{{ grafana_admin_password }}"
+  GF_SERVER_ROOT_URL: "https://grafana.{{ base_domain }}"

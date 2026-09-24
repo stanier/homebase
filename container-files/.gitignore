@@ -3,3 +3,9 @@
 dns/data/keys/
 grafana/provisioning/datasources/
 adguardhome/data/conf/
+alertmanager/data/alertmanager.yml
+wazuh/data/wazuh_indexer/certs/
+wazuh/data/wazuh_indexer/internal_users.yml
+wazuh/data/wazuh_manager/certs/
+wazuh/data/wazuh_manager/authd.pass
+wazuh/data/wazuh_dashboard/certs/

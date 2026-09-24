@@ -4,6 +4,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Container]
+ContainerName=caddy
 Image=caddy.build
 Network=host
 Volume=/srv/containers/container-files/caddy/data/Caddyfile:/etc/caddy/Caddyfile:ro,z
@@ -11,7 +12,6 @@ Volume=/srv/containers/container-files/caddy/data/root-ca.crt:/etc/caddy/root-ca
 Volume=/srv/containers/container-files/caddy/data/intermediate.crt:/etc/caddy/intermediate.crt:ro,z
 Volume=/srv/containers/container-files/caddy/data/intermediate.key:/etc/caddy/intermediate.key:ro,z
 Volume=/srv/containers/appdeploy-state/caddy-apps:/etc/caddy/apps:ro,z
-Volume=/srv/containers/appdeploy-state/ssh-apps:/etc/caddy/ssh-apps:ro,z
 Volume=caddy_caddy_data:/data
 Volume=caddy_caddy_config:/config
 

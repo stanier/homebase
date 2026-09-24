@@ -59,7 +59,7 @@ $hostname {
 }
 EOF
 
-  # Imported by the layer4 block (see container-files/caddy's
+  # Imported by the layer4 block (see container-files/caddy-l4's
   # Caddyfile) -- matches this app's SNI, terminates the TLS the client
   # wrapped its SSH connection in, and forwards the now-plain SSH bytes
   # to the app's real container port.
@@ -89,10 +89,11 @@ EOF
   rm -f "$SSH_APPS_DIR/$app.caddyroute"
 fi
 
-# systemd-caddy, not caddy -- caddy.container sets no ContainerName=, and
-# no unit in this repo does, so Quadlet's default naming (systemd-<unit
-# name>) applies uniformly.
-podman exec systemd-caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+# caddy-l4.container pins ContainerName=caddy (its unit basename is
+# caddy-l4, and Quadlet's default naming would otherwise produce
+# systemd-caddy-l4) so this exec target stays stable regardless of
+# which caddy variant (plain caddy vs caddy-l4) is actually deployed.
+podman exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 
 if [[ "$app_type" == "ssh" ]]; then
   echo "routed $app.ssh.$DOMAIN_SUFFIX (TLS-wrapped SSH) -> $app_host:$port"

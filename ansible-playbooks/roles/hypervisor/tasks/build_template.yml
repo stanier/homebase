@@ -18,6 +18,50 @@
     mode: "0644"
   become: true
 
+- name: "{{ tmpl_key }}: ensure virt-customize is available on this node"
+  ansible.builtin.package:
+    name: libguestfs-tools
+    state: present
+  become: true
+  when: tmpl.os_family in proxmox_template_bake_packages
+
+# Bakes proxmox_template_bake_packages[tmpl.os_family] into the staged
+# qcow2 in place, before it's imported as the template's boot disk --
+# see that var's own comment for why these packages specifically and
+# not others. --network is required: without it the appliance
+# virt-customize boots to run --install in has no route out to the
+# guest's package mirrors, so every --install would just fail offline.
+# --install runs each package as its own linked operation in the order
+# given on the command line (one appliance boot covers all of them), and
+# the final --run-command clears the guest's package-manager cache so a
+# clone's first real install isn't confused by a stale index the way the
+# upstream Rocky cloud image already is on its own, unbaked dnf cache
+# (see common/tasks/acl.yml's "stale dnf cache" task/comment -- same
+# underlying dnf behaviour, unrelated cause).
+- name: "{{ tmpl_key }}: bake baseline packages into the staged image"
+  ansible.builtin.command:
+    # Each package gets its own --install so virt-customize's "run
+    # operations in the order given" behaviour is what decides ordering
+    # (epel-release before node-exporter), not comma-list parsing inside
+    # a single --install. bake_install_args is built below as a real
+    # Ansible/Jinja list (namespace + for-loop), so this argv is a plain
+    # list expression throughout -- no shell involved.
+    argv: >-
+      {{
+        ['virt-customize', '-a', proxmox_image_staging_dir ~ '/' ~ tmpl_key ~ '.qcow2', '--network']
+        + bake_install_args
+        + ['--run-command', 'dnf clean all' if tmpl.os_family == 'RedHat' else 'apt-get clean']
+      }}
+  vars:
+    bake_install_args: >-
+      {%- set ns = namespace(args=[]) -%}
+      {%- for pkg in proxmox_template_bake_packages[tmpl.os_family] -%}
+        {%- set ns.args = ns.args + ['--install', pkg] -%}
+      {%- endfor -%}
+      {{ ns.args }}
+  become: true
+  when: tmpl.os_family in proxmox_template_bake_packages
+
 - delegate_to: localhost
   become: false
   vars:

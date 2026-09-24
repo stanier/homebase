@@ -1,0 +1,18 @@
+---
+# Set to false on a host to stop auditing (and tear down the config this
+# role previously laid down) without removing it from the play.
+auditd_enabled: true
+
+# Baseline watch rules, rendered one per line into
+# /etc/audit/rules.d/homebase.rules. Not exhaustive -- covers the standard
+# CIS-ish identity/auth/sudo surface. Override per-host/group to extend.
+auditd_rules:
+  - -w /etc/passwd -p wa -k identity
+  - -w /etc/shadow -p wa -k identity
+  - -w /etc/group -p wa -k identity
+  - -w /etc/gshadow -p wa -k identity
+  - -w /etc/sudoers -p wa -k sudo_config
+  - -w /etc/sudoers.d/ -p wa -k sudo_config
+  - -w /etc/ssh/sshd_config -p wa -k sshd_config
+  - -w /var/log/sudo.log -p wa -k sudo_log
+  - -w /etc/pam.d/ -p wa -k pam_config

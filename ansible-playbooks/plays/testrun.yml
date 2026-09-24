@@ -21,5 +21,9 @@
   tags: keycloak_ldap_federation
 - import_playbook: system/logging.yml
   tags: logging
+- import_playbook: system/auditd.yml
+  tags: auditd
+- import_playbook: system/wazuh_agent.yml
+  tags: wazuh_agent
 - import_playbook: apps/mail.yml
   tags: mail

@@ -21,40 +21,67 @@
 # once in main.yml from a git diff of this update) includes this service --
 # covers bind-mounted config that isn't itself a quadlet unit file, e.g.
 # dns/data/named.conf, which the per-file sync-changed check below can't see.
+#
+# containerapps_quadlet_services_rootful opts a service out of all of the
+# above and into a genuine root, system-scope quadlet instead -- for a
+# service whose upstream image needs kernel-level CAP_NET_ADMIN/NAT
+# manipulation that a rootless user-namespaced container can't get no
+# matter what AddCapability= says in its own unit (confirmed for wg-easy:
+# `wg-quick`'s `iptables -t nat` fails "Permission denied (you must be
+# root)" under rootless Podman even with NET_ADMIN/SYS_MODULE granted,
+# since those capabilities only apply inside the container's own nested
+# user namespace, not the host's initial one that actually owns the
+# netfilter tables). Unit files land in /etc/containers/systemd (root:root)
+# instead of the containers user's own ~/.config/containers/systemd, and
+# every systemd/copy task below runs as real root at system scope instead
+# of becoming containers_user at user scope.
+
+- name: "Determine whether {{ containerapps_quadlet_service }} runs rootful"
+  ansible.builtin.set_fact:
+    containerapps_quadlet_rootful: "{{ containerapps_quadlet_service in containerapps_quadlet_services_rootful }}"
+
+- name: "Set quadlet deployment target for {{ containerapps_quadlet_service }}"
+  ansible.builtin.set_fact:
+    containerapps_quadlet_systemd_dir: >-
+      {{ '/etc/containers/systemd' if containerapps_quadlet_rootful
+         else containers_home + '/.config/containers/systemd' }}
+    containerapps_quadlet_scope: "{{ 'system' if containerapps_quadlet_rootful else 'user' }}"
+    containerapps_quadlet_owner: "{{ 'root' if containerapps_quadlet_rootful else containers_user }}"
+    containerapps_quadlet_environment: >-
+      {{ {} if containerapps_quadlet_rootful else {'XDG_RUNTIME_DIR': containers_xdg_runtime_dir} }}
 
 - name: "Find quadlet unit files for {{ containerapps_quadlet_service }}"
   ansible.builtin.find:
     paths: "{{ containerapps_dest }}/{{ containerapps_quadlet_service }}"
     patterns: "*.container,*.volume,*.network,*.pod,*.build"
-  become_user: "{{ containers_user }}"
+  become_user: "{{ omit if containerapps_quadlet_rootful else containers_user }}"
   register: containerapps_quadlet_service_files
 
 - name: "Sync quadlet unit files for {{ containerapps_quadlet_service }}"
   ansible.builtin.copy:
     remote_src: true
     src: "{{ item.path }}"
-    dest: "{{ containers_home }}/.config/containers/systemd/{{ item.path | basename }}"
-    owner: "{{ containers_user }}"
-    group: "{{ containers_user }}"
+    dest: "{{ containerapps_quadlet_systemd_dir }}/{{ item.path | basename }}"
+    owner: "{{ containerapps_quadlet_owner }}"
+    group: "{{ containerapps_quadlet_owner }}"
     mode: "0644"
-  become_user: "{{ containers_user }}"
+  become_user: "{{ omit if containerapps_quadlet_rootful else containers_user }}"
   loop: "{{ containerapps_quadlet_service_files.files }}"
   loop_control:
     label: "{{ item.path | basename }}"
   register: containerapps_quadlet_service_sync
 
-- name: "Reload systemd user daemon for {{ containerapps_quadlet_service }}"
+- name: "Reload systemd daemon for {{ containerapps_quadlet_service }}"
   ansible.builtin.systemd:
     daemon_reload: true
-    scope: user
-  become_user: "{{ containers_user }}"
-  environment:
-    XDG_RUNTIME_DIR: "{{ containers_xdg_runtime_dir }}"
+    scope: "{{ containerapps_quadlet_scope }}"
+  become_user: "{{ omit if containerapps_quadlet_rootful else containers_user }}"
+  environment: "{{ containerapps_quadlet_environment }}"
 
 - name: "Start or restart {{ containerapps_quadlet_service }} units"
   ansible.builtin.systemd:
     name: "{{ (item.item.path | basename).rsplit('.', 1)[0] }}.service"
-    scope: user
+    scope: "{{ containerapps_quadlet_scope }}"
     # Restarts if this unit file itself changed, OR if anything else in the
     # service's directory changed (bind-mounted config, etc. -- see
     # containerapps_quadlet_data_changed in main.yml).
@@ -62,9 +89,8 @@
       {{ 'restarted'
          if (item.changed or containerapps_quadlet_service in (containerapps_quadlet_data_changed | default([])))
          else 'started' }}
-  become_user: "{{ containers_user }}"
-  environment:
-    XDG_RUNTIME_DIR: "{{ containers_xdg_runtime_dir }}"
+  become_user: "{{ omit if containerapps_quadlet_rootful else containers_user }}"
+  environment: "{{ containerapps_quadlet_environment }}"
   loop: "{{ containerapps_quadlet_service_sync.results }}"
   loop_control:
     label: "{{ item.item.path | basename }}"

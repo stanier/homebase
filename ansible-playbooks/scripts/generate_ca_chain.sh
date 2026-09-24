@@ -60,6 +60,7 @@ gen_root() {
     echo "                       inventory/dangerzone/group_vars/files/root-ca.crt"
     echo "                       inventory/testzone/group_vars/files/root-ca.crt"
     echo "                       container-files/caddy/data/root-ca.crt"
+    echo "                       container-files/caddy-l4/data/root-ca.crt"
     echo "                       container-files/gitea-runner/data/root-ca.crt)"
 }
 

@@ -1,0 +1,27 @@
+[Unit]
+Description=Trivy vulnerability scanner (server mode)
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+# 2026-03-19/23: v0.69.4-0.69.6 were backdoored on Docker Hub, GHCR, and
+# ECR alike via compromised maintainer credentials (GHSA-69fq-xp46-6x23)
+# -- registry choice didn't matter, all three were hit. Before bumping
+# this tag, check Aqua's advisory for the current affected range rather
+# than assuming a newer tag is automatically clean.
+Image=docker.io/aquasec/trivy:0.74.0
+EnvironmentFile=/srv/containers/container-files/trivy/.env
+PublishPort=4954:4954
+Volume=trivy_trivy_cache:/root/.cache/trivy
+Exec=server --listen 0.0.0.0:4954
+HealthCmd=wget -q --spider http://127.0.0.1:4954/healthz
+HealthInterval=30s
+HealthTimeout=5s
+HealthStartPeriod=60s
+HealthRetries=3
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
