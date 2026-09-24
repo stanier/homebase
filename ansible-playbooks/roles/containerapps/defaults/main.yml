@@ -25,6 +25,24 @@ containerapps_quadlet_services: []
 # also doesn't auto-start at boot; start it manually when actually needed.
 containerapps_quadlet_services_disabled: []
 
+# Which of containerapps_quadlet_services (or _disabled) run as genuine
+# root, system-scope quadlets (/etc/containers/systemd) instead of the
+# containers user's own rootless ~/.config/containers/systemd. Keep this
+# as short as possible -- it's an escape hatch for a service whose
+# upstream image needs kernel-level CAP_NET_ADMIN/NAT manipulation a
+# rootless user-namespaced container can never get regardless of its own
+# AddCapability= lines, e.g. wg-easy's wg-quick. See quadlet_service.yml's
+# own comment for the full story.
+containerapps_quadlet_services_rootful: []
+
+# Kernel modules this host's quadlet services need loaded -- and
+# persisted across reboots via /etc/modules-load.d -- that aren't
+# guaranteed loaded already. E.g. a rootful WireGuard container's
+# wg-quick shells out to legacy `iptables -t nat`, which nftables-backend
+# distros like Rocky never auto-load on their own. Empty list is a no-op
+# everywhere else.
+containerapps_kernel_modules: []
+
 # Rootless podman's cgroup manager for the containers user. Leave as
 # "systemd" unless this host's sudo session isn't registered with
 # systemd-logind (no pam_systemd on the become path), which makes pod

@@ -41,11 +41,34 @@ up; this page just tracks status until then.
 - **WireGuard** — shipped as `wg-easy:15` (its on-disk config format
   isn't compatible with `14`) on the default bridge with published
   ports (`51820/udp` tunnel, `51821/tcp` admin UI) plus `NET_ADMIN`/
-  `SYS_MODULE` and the two sysctls its NAT/masquerade setup needs —
-  same shape as upstream's own reference compose, no `Network=host`
-  needed. v15 dropped `WG_HOST`/`PASSWORD_HASH` as env vars entirely —
+  `SYS_MODULE`/`NET_RAW` and the two sysctls its NAT/masquerade setup
+  needs — same shape as upstream's own reference compose, no
+  `Network=host` needed. `NET_RAW` matters even running rootful: Podman's
+  default capability set has never included it, and legacy `iptables`
+  needs it to open its own control socket before touching netfilter
+  tables at all -- without it, `wg-quick`'s `iptables -t nat` calls fail
+  "Permission denied (you must be root)" despite already being real root
+  with `NET_ADMIN` granted. v15 dropped `WG_HOST`/`PASSWORD_HASH` as env vars entirely —
   both get set through the web UI's first-login setup wizard instead,
-  so there's no `.env`/vault entry for this service at all.
+  so there's no `.env`/vault entry for this service at all. Runs as a
+  **rootful** quadlet (`containerapps_quadlet_services_rootful` in its
+  `host_vars`, see `roles/containerapps`), the one exception to every
+  other service's rootless Podman — confirmed `wg-quick`'s `iptables -t
+  nat` call fails under rootless no matter what `AddCapability=` says,
+  since those capabilities only apply inside the container's own nested
+  user namespace, not the host's real one. Also needs `iptable_nat`/
+  `ip6table_nat` loaded (`containerapps_kernel_modules`), since Rocky's
+  nftables-backend kernel never auto-loads them for legacy `iptables`.
+  The admin UI is plain **HTTP** on the container itself — wg-easy has
+  no TLS of its own — and v15 refuses login over an insecure connection.
+  Rather than the `INSECURE=true` escape hatch upstream documents for a
+  reverse-proxyless setup, it's fronted by container-sandbox's Caddy at
+  `wireguard.{{ base_domain }}` (real TLS via the fleet's internal ACME,
+  same as every other admin UI) — Caddy's `X-Forwarded-Proto: https`
+  satisfies wg-easy's check. `firewall_rules` on this host now scopes
+  `51821/tcp` to just container-sandbox's `app_ip`, not the whole app
+  network, since that Caddy route is the only thing that needs to reach
+  it directly anymore.
 
 ## Ansible wiring (testzone)
 
@@ -58,7 +81,7 @@ hand (`ansible-vault edit` — that file is encrypted and not something
 this pass could fill in) before `plays/apps/podman.yml` can actually
 bring it up. WireGuard needs no vault entry at all — its admin
 account/`WG_HOST` get set on first login instead, at
-`https://<wireguard host>:51821` over the app network (see the
+`http://<wireguard host>:51821` over the app network (see the
 `firewall_rules` in its `host_vars`). Whatever router-level port-forward
 gets `51820/udp` to that host from the real internet is still outside
 what either repo can express.

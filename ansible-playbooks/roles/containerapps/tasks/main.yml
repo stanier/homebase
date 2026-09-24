@@ -40,6 +40,22 @@
     state: absent
   when: containerapps_cgroup_manager != "cgroupfs"
 
+- name: Load required kernel modules for this host's container services
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ containerapps_kernel_modules }}"
+
+- name: Persist required kernel modules across reboots
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/containerapps.conf
+    mode: "0644"
+    content: |
+      {% for item in containerapps_kernel_modules %}
+      {{ item }}
+      {% endfor %}
+  when: containerapps_kernel_modules | length > 0
+
 - name: Lower the unprivileged-port floor for Network=host services that need it
   ansible.posix.sysctl:
     name: net.ipv4.ip_unprivileged_port_start
@@ -560,7 +576,16 @@
     owner: "{{ containers_user }}"
     group: "{{ containers_user }}"
     mode: "0755"
-  when: (containerapps_quadlet_services + containerapps_quadlet_services_disabled) | length > 0
+  when: (containerapps_quadlet_services + containerapps_quadlet_services_disabled) | difference(containerapps_quadlet_services_rootful) | length > 0
+
+- name: Ensure system quadlet unit directory exists
+  ansible.builtin.file:
+    path: /etc/containers/systemd
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: (containerapps_quadlet_services + containerapps_quadlet_services_disabled) | intersect(containerapps_quadlet_services_rootful) | length > 0
 
 - name: Deploy and start each quadlet-managed service
   ansible.builtin.include_tasks: quadlet_service.yml

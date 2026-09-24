@@ -12,11 +12,27 @@ Wants=network-online.target
 Image=ghcr.io/wg-easy/wg-easy:15
 Environment=PORT=51821
 Environment=WG_PORT=51820
+# v15 refuses login over plain HTTP by default ("You can't log in with
+# an insecure connection. Use HTTPS."). NOT worked around with
+# INSECURE=true here -- container-sandbox's Caddy fronts this at
+# wireguard.{{ base_domain }} with real TLS instead (see its host_vars),
+# same pattern as every other admin UI in the fleet. Caddy's own
+# X-Forwarded-Proto: https is what satisfies this check; if that route
+# ever goes away, this needs INSECURE=true again (see git history/
+# roadmap.md for that version) since wg-easy has no TLS of its own.
 PublishPort=51820:51820/udp
 PublishPort=51821:51821/tcp
 Volume=wireguard_wireguard_data:/etc/wireguard
 AddCapability=NET_ADMIN
 AddCapability=SYS_MODULE
+# NET_ADMIN alone isn't enough even running rootful -- Podman's default
+# capability set has never included NET_RAW (confirmed: `podman run
+# --rm alpine cat /proc/self/status` lacks it on this host too, it's
+# not a fleet-specific trim), and legacy iptables needs it to open its
+# own control socket before it ever touches netfilter tables. Without
+# this, wg-quick's `iptables -t nat` calls fail "Permission denied (you
+# must be root)" even as real root with NET_ADMIN granted.
+AddCapability=NET_RAW
 Sysctl=net.ipv4.ip_forward=1
 Sysctl=net.ipv4.conf.all.src_valid_mark=1
 
