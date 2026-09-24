@@ -36,6 +36,21 @@ AddCapability=NET_RAW
 Sysctl=net.ipv4.ip_forward=1
 Sysctl=net.ipv4.conf.all.src_valid_mark=1
 
+# One-time manual step after first-login setup, not expressible here:
+# wg-easy's default PostUp/PostDown scripts (set in its own DB via the
+# Settings UI, not this unit) shell out to legacy `iptables -t nat`,
+# which fails outright on kernels with no legacy netfilter tables (e.g.
+# Rocky 10, this fleet's current template) -- confirmed via `wg-quick up
+# wg0` failing "iptables v1.8.13 (legacy): can't initialize iptables
+# table `nat'" and rolling the interface back. Needs the PostUp/PostDown
+# scripts replaced in wg-easy's Settings UI with the nft-based versions
+# from its own Podman+nftables guide (wg-easy.github.io/wg-easy/v15.1/
+# examples/tutorials/podman-nft/) -- keep the {{device}}/{{port}}/etc.
+# placeholders as-is, wg-easy templates those itself. containerapps_
+# kernel_modules (host_vars/wireguard.yml) loading `wireguard`+`nft_masq`
+# is a prerequisite for this but not sufficient by itself -- nothing
+# switches wg-easy's own scripts from iptables to nft automatically.
+
 [Service]
 Restart=always
 
