@@ -24,9 +24,9 @@ gateway:
 upstreams:
   - name: anthropic
     dialect: anthropic
-    api_url: https://stoa.example.org/
+    api_url: https://api.anthropic.com
     api_key_env: ANTHROPIC_API_KEY   # reuses the same var as agentd
-    default_model: qwen3.5-35b-a3b
+    default_model: claude-haiku-4-5-20251001
     default_max_tokens: 8096
 
   # Uncomment to add an OpenAI upstream alongside Anthropic:
@@ -48,13 +48,13 @@ upstreams:
   # The provider's /models endpoint is not called. Only models explicitly listed
   # in the routes below are exposed in /v1/models. Use this for aggregators like
   # OpenRouter where you want to control exactly which models are available.
-  # - name: openrouter
-  #   dialect: openai
-  #   api_url: https://openrouter.ai/api/v1
-  #   api_key_env: OPENROUTER_API_KEY
-  #   default_model: openai/gpt-4o
-  #   default_max_tokens: 4096
-  #   static_models_only: true
+  - name: openrouter
+    dialect: openai
+    api_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+    default_model: openai/gpt-4o
+    default_max_tokens: 4096
+    static_models_only: true
 
 routes:
   # Route everything to Anthropic by default.
