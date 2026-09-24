@@ -196,6 +196,32 @@
   loop_control:
     label: "{{ item.1.path }}"
 
+- name: Ensure stoa's persistent-data directories exist
+  # stoa-agentd/-garage.container bind-mount fixed /srv/stoa/... paths,
+  # same reasoning as gitea's /srv/gitea/{data,config} above: deliberately
+  # outside the synced container-files tree so a redeploy/rsync never
+  # wipes agentd's traces/logs/sessions or Garage's object store. Unlike
+  # gitea, agentd and Garage both run as root inside their containers
+  # (see container-files/stoa's Containerfile comments), which rootless
+  # Podman maps to containers_user itself -- no a+rwX workaround needed.
+  # squid.conf's own directory (/srv/stoa/squid) isn't listed here: it's
+  # created automatically by the "Ensure parent directories exist for
+  # templated secret files" task below, since that file is seeded via
+  # containerapps_secret_files.
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+    mode: "0750"
+  loop:
+    - /srv/stoa/traces
+    - /srv/stoa/logs
+    - /srv/stoa/sessions
+    - /srv/stoa/garage/meta
+    - /srv/stoa/garage/data
+  when: "'stoa' in containerapps_quadlet_services"
+
 - name: Ensure parent directories exist for templated secret files
   # item.dest is relative to containerapps_dest unless it starts with
   # "/" (config bind-mounted from outside the synced tree, e.g. gitea's

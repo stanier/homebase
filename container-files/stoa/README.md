@@ -42,31 +42,47 @@ directory.
 
 ## Before deploying
 
-1. Add `stoa` to the target host's `containerapps_quadlet_services` in
-   `../ansible-playbooks` (`host_vars/<host>.yml`) -- nothing here runs
-   until that's done (see `container-files/AGENTS.md`).
-2. Wire secrets via ansible-vault, same pattern as every other
-   `container-files` service -- see
-   `../ansible-playbooks/docs/VAULT.md`'s "container-files secrets", and:
-   - `.env.example` -> `containerapps_secret_files` dest `stoa/.env`
-   - `postgres-<svc>.env.example` -> one `containerapps_secret_files`
-     entry each, dest `stoa/postgres-<svc>.env`
-   - `podman secret create gateway_api_key -` (and `venice_api_key`,
-     `arcee_api_key`, `openrouter_api_key` if those upstreams are enabled
-     in `data/config/inference-gateway.yaml`) on the target host directly
-     -- Podman secrets aren't part of the synced tree.
-3. Pick an LLM provider: `.env`'s `LLM_PROVIDER`/`GATEWAY_API_URL` and
-   `data/config/config.yaml`'s `llm.providers` are left at their upstream
-   defaults (Anthropic) but commented as a stub -- fill in for real before
-   starting `stoa-agentd`.
-4. After first boot, Garage needs a one-time bucket/key setup (upstream's
-   own `garage-init` is `profiles: disabled` too, i.e. manual by design) --
-   run stoa's `scripts/garage-init.sh` equivalent commands against the
-   running `stoa-garage` container.
-5. Seed `/srv/stoa/squid/squid.conf` from `data/config/squid.conf.default`
-   once, on hosts running this service (see "Persistent data" below) --
-   agentd overwrites it with real per-container ACLs on its own first
-   start.
+The `stoa` host in `../ansible-playbooks`' `testzone` inventory is already
+wired up end to end: `host_vars/stoa.yml` sets
+`containerapps_quadlet_services: [stoa]`, composes the full `.env` this
+directory's units read via `containerapps_env` (note this goes through
+`containerapps_env`, not a `.env.example` copy -- that mechanism only
+writes one `.env` per service directory, which is why the four Postgres
+passwords are separate `containerapps_secret_files` entries instead,
+keyed to the `postgres-<svc>.env` filenames each `stoa-postgres-*.container`
+expects), seeds `/srv/stoa/squid/squid.conf`'s deny-all default, and adds
+Caddy routes on `container-sandbox` for `stoa`/`stoa-authd`/`stoa-apikeyd`/
+`stoa-idp`/`stoa-infgw.{{ base_domain }}`. `roles/containerapps` also
+grew a `stoa`-specific task to create `/srv/stoa/{traces,logs,sessions,garage}`
+before first start (see that role's `main.yml`).
+
+If you're pointing this at a different host or environment, replicate
+that host_vars file and Caddyfile block -- `container-files/AGENTS.md`'s
+"a host only runs services listed in `containerapps_quadlet_services`"
+still applies.
+
+What that wiring does **not** cover -- do these by hand:
+
+1. Add the `vault_stoa_*` secrets (DB passwords, `AUTHD_ADMIN_TOKEN`,
+   `APIKEYD_ADMIN_TOKEN`, `AUTHD_OAUTH_LOCAL_CLIENT_SECRET`,
+   `ATTACHMENT_SECRET`, Garage's RPC/admin/access/secret keys) to
+   `group_vars/all/vault.yml` via `ansible-vault edit` -- see
+   `../ansible-playbooks/docs/VAULT.md`. `group_vars/all/vars.yml` already
+   references all of them under their plain `stoa_*` names.
+2. `podman secret create gateway_api_key -` (and `venice_api_key`,
+   `arcee_api_key`, `openrouter_api_key` if those upstreams are enabled in
+   `data/config/inference-gateway.yaml`) directly on the `stoa` host --
+   Podman secrets aren't part of the synced tree or `containerapps_env`.
+3. Pick an LLM provider: `LLM_PROVIDER`/`GATEWAY_API_URL` are deliberately
+   left out of `host_vars/stoa.yml`'s `containerapps_env.stoa`, and
+   `data/config/config.yaml`'s `llm.providers` is still at its upstream
+   Anthropic-shaped stub -- fill in both for real before starting
+   `stoa-agentd`.
+4. After first boot, Garage needs a one-time bucket/key setup matching the
+   access/secret key pair from step 1 (upstream's own `garage-init` is
+   `profiles: disabled` too, i.e. manual by design) -- run stoa's
+   `scripts/garage-init.sh` equivalent commands against the running
+   `stoa-garage` container.
 
 ## The Podman socket
 
@@ -82,13 +98,16 @@ tradeoff is acceptable, and don't add `Network=host` or drop the
 
 Following the `gitea`/`dovecot` pattern in `container-files/AGENTS.md`,
 state that must survive a redeploy lives outside the synced tree at
-`/srv/stoa/` on the target host (create it out-of-band, e.g. via the
-Ansible role that provisions `/srv/gitea` and `/srv/dovecot` today):
+`/srv/stoa/` on the target host. `roles/containerapps`' "Ensure stoa's
+persistent-data directories exist" task creates these automatically
+(gated on `'stoa' in containerapps_quadlet_services`, same as gitea's
+equivalent task) -- nothing to do by hand:
 
 - `/srv/stoa/traces`, `/srv/stoa/logs`, `/srv/stoa/sessions` -- agentd's
   file-based state (session *metadata* itself is in Postgres).
 - `/srv/stoa/squid/squid.conf` -- shared between agentd (writer) and squid
-  (reader); see step 5 above.
+  (reader); seeded from `host_vars/stoa.yml`'s `containerapps_secret_files`
+  entry, whose parent-directory task creates `/srv/stoa/squid` itself.
 - `/srv/stoa/garage/{meta,data}` -- Garage's object store.
 
 `data/config/` is read-only, non-secret config committed to this repo (or
