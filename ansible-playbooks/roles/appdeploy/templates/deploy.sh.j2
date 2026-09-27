@@ -32,6 +32,15 @@ DOMAIN_SUFFIX="{{ appdeploy_domain_suffix }}"
 BASE_PORT="{{ appdeploy_base_port }}"
 CADDY_ROUTE_KEY="{{ containers_home }}/.ssh/caddy_route_ed25519"
 CADDY_ROUTE_HOST="{{ hostvars[appdeploy_caddy_route_hostname].ansible_host }}"
+# This host's own app_ip -- passed explicitly to caddy-route.sh below so
+# Caddy's reverse_proxy target comes from here, not from SSH_CLIENT on
+# the receiving end. That used to be how caddy-route.sh got this
+# address (parsed off the incoming SSH connection's source), which
+# silently coupled Caddy's data-plane target to whatever network this
+# control-plane SSH hop happened to travel over -- management_ip when
+# CADDY_ROUTE_HOST above is ansible_host, which is never what should
+# receive real application traffic.
+APP_HOST_APP_IP="{{ app_ip }}"
 
 # shellcheck disable=SC2206 # word-splitting the client's command is the point
 args=(${SSH_ORIGINAL_COMMAND:-})
@@ -120,7 +129,7 @@ fi
 # already validated above; this key can only ever run caddy-route.sh
 # there regardless of what's sent, same as this script itself is the only
 # thing the CI key can ever reach.
-ssh -i "$CADDY_ROUTE_KEY" -o BatchMode=yes "containers@$CADDY_ROUTE_HOST" "$app" "$port" "$app_type"
+ssh -i "$CADDY_ROUTE_KEY" -o BatchMode=yes "containers@$CADDY_ROUTE_HOST" "$app" "$port" "$app_type" "$APP_HOST_APP_IP"
 
 if [[ "$app_type" == "ssh" ]]; then
   echo "deployed $app:$tag -> ssh $app.ssh.$DOMAIN_SUFFIX ({{ ansible_default_ipv4.address }}:$port)"

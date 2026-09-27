@@ -27,13 +27,25 @@ service in `container-files` addresses fleet peers by raw `app_ip`
 needed to resolve an actual hostname.
 
 Fix, two places (both needed -- they're separate container-create
-calls):
-- `gitea-runner.container`'s `DNS=192.168.104.24` (container-sandbox,
-  which runs AdGuardHome/bind) -- covers `act_runner` itself.
-- `gitea-runner/data/config.yaml`'s `container.options: --dns=192.168.104.24`
+calls). Both files are templated from `gitea-runner-1`'s
+`containerapps_secret_files` (not tracked in `container-files` --
+same pattern as `vmagent/vmagent.container`), specifically so the IP
+comes from `hostvars['dnsguard'].app_ip` instead of being hardcoded --
+it drifted once already when AdGuardHome moved off `container-sandbox`
+onto its own dedicated `dnsguard` host, which silently broke this with
+no config change on either side to point at:
+- `gitea-runner.container`'s `DNS=` -- covers `act_runner` itself.
+- `gitea-runner/data/config.yaml`'s `container.options: --dns=...`
   -- covers each *job* container `act_runner` spawns per workflow run,
   which are separate `docker create` calls via the podman socket and
   aren't covered by the quadlet's own `DNS=`.
+
+If this breaks again, suspect `dnsguard`'s `app_ip` having changed
+(another host move, a re-IP) rather than a code/config regression --
+confirm with `ansible-inventory --host dnsguard | grep app_ip` and
+diff against what's actually deployed in
+`/srv/containers/container-files/gitea-runner/gitea-runner.container`
+on `gitea-runner-1`.
 
 ### SELinux: confined container can't connect to the podman socket
 
@@ -100,7 +112,7 @@ ipv4.dns con show`). None of those know about `base_domain`.
 this; this is the same root problem at the VM's own OS level.
 
 Fix: `roles/common/tasks/internal_dns.yml` points every VM's
-`cloud-init eth0` connection at AdGuardHome (`container-sandbox`'s
+`cloud-init eth0` connection at AdGuardHome (`dnsguard`'s
 `app_ip`) via `community.general.nmcli`, replacing the DHCP-provided
 DNS entirely (AdGuardHome already forwards non-internal queries
 upstream itself, so this covers both internal and external

@@ -59,6 +59,15 @@
       Authorization: "token {{ gitea_ci_api_token }}"
     body_format: json
     body:
+      # ansible_host (management network), not app_ip -- this is the
+      # address a CI job container SSHes into to reach deploy.sh, a
+      # control-plane action same as Ansible's own connection to this
+      # host, not application data-plane traffic. Confirmed reachable
+      # from gitea-runner-1's job containers this way; app_ip is not
+      # directly reachable from outside the app-host/app-proxy pair's
+      # own subnet (verified the hard way -- see appdeploy/tasks/main.yml's
+      # host-key-scan task, which needs the same management-VLAN jump
+      # host for exactly this reason).
       value: "{{ hostvars['app-host'].ansible_host }}"
     status_code: [201]
   delegate_to: gitea

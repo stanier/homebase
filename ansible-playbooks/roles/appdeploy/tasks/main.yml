@@ -87,6 +87,13 @@
   # the jump has to happen a level up: extract "user@jumphost" out of
   # ansible_ssh_common_args's ProxyCommand and wrap the whole ssh-keyscan
   # invocation in an ssh call to that jump host instead.
+  #
+  # app_ip was tried here instead, on the theory that peer-to-peer
+  # traffic in this fleet always uses app_ip -- confirmed wrong the hard
+  # way: ssh-keyscan against app-proxy's app_ip from the controller just
+  # times out. app_ip is a data-plane-only network between the VMs
+  # themselves; ansible_host/management_ip is what's actually routed to
+  # the controller, jump host and all. Keep this on ansible_host.
   ansible.builtin.set_fact:
     appdeploy_caddy_jump_host: >-
       {{ hostvars[appdeploy_caddy_route_hostname].ansible_ssh_common_args
@@ -94,9 +101,7 @@
          | regex_search('[A-Za-z0-9_.-]+@[0-9.]+') | default('', true) }}
 
 - name: Scan SSH host key for the Caddy host
-  # Runs from the controller (delegate_to: localhost), same as
-  # containerapps' analogous git-host scan -- that one needs no jump host
-  # since it targets gitea directly on the reachable app_ip subnet.
+  # Runs from the controller (delegate_to: localhost).
   ansible.builtin.command: >-
     {{ 'ssh -o StrictHostKeyChecking=accept-new ' + appdeploy_caddy_jump_host
        if appdeploy_caddy_jump_host | length > 0 else '' }}

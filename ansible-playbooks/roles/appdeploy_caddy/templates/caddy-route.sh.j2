@@ -5,6 +5,15 @@
 # same command="..." trick as the CI key deploy.sh sits behind, so a
 # compromised apphost can only ever write one Caddy route file here and
 # trigger a reload, nothing else on container-sandbox.
+#
+# app_host arrives as an explicit 4th argument (app-host's own app_ip,
+# baked into deploy.sh.j2 at template time) rather than being parsed off
+# SSH_CLIENT -- the SSH hop that invokes this script travels over the
+# management network (ansible_host), which isn't the address Caddy
+# should ever proxy real application traffic to. A compromised apphost
+# already controls $app/$port entirely (forwarded verbatim from
+# whatever the CI key's own caller sent deploy.sh), so it controlling
+# this argument too doesn't widen the actual trust boundary any further.
 set -euo pipefail
 
 CADDY_APPS_DIR="{{ containers_home }}/appdeploy-state/caddy-apps"
@@ -16,9 +25,10 @@ args=(${SSH_ORIGINAL_COMMAND:-})
 app="${args[0]:-}"
 port="${args[1]:-}"
 app_type="${args[2]:-http}"
+app_host="${args[3]:-}"
 
-if [[ -z "$app" || -z "$port" ]]; then
-  echo "usage: <app> <port> [http|ssh]" >&2
+if [[ -z "$app" || -z "$port" || -z "$app_host" ]]; then
+  echo "usage: <app> <port> [http|ssh] <app_host_app_ip>" >&2
   exit 1
 fi
 if [[ ! "$app" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
@@ -33,14 +43,8 @@ if [[ "$app_type" != "http" && "$app_type" != "ssh" ]]; then
   echo "invalid app type: $app_type (want http or ssh)" >&2
   exit 1
 fi
-
-# The connecting host's own address, straight from sshd -- not a
-# client-supplied argument, so whatever calls this can only ever route
-# to its own real address, never spoof some other target by just passing
-# a different IP.
-app_host="${SSH_CLIENT%% *}"
-if [[ -z "$app_host" ]]; then
-  echo "could not determine caller's address from SSH_CLIENT" >&2
+if [[ ! "$app_host" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "invalid app_host: $app_host" >&2
   exit 1
 fi
 
