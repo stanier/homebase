@@ -1,0 +1,103 @@
+---
+# Wires Gitea's authentication to FreeIPA. Gitea has no config-file LDAP
+# support -- auth sources are DB rows created via `gitea admin auth`, so
+# this runs as a separate play (after plays/apps/podman.yml, alongside
+# keycloak_ldap_federation.yml) rather than a containerapps_secret_files
+# template, same reasoning as that play's own comment.
+#
+# Requires roles/freeipa's svc-gitea-bind account and CA-cert fetch to
+# have already run (freeipa_gitea_bind_password's account needs to
+# exist), and plays/apps/podman.yml to have deployed/started gitea,
+# before this can succeed. systemd-gitea is Quadlet's default container
+# name for gitea.container (no ContainerName= override) -- see
+# roles/containerapps/tasks/main.yml's runner-token generation task for
+# the same podman-exec-into-gitea pattern this reuses.
+- name: Configure Gitea's LDAP authentication source against FreeIPA
+  hosts: gitea
+  become: true
+  gather_facts: false
+
+  vars:
+    # containers_user is a role default (roles/boxship/defaults/main.yml),
+    # not a global var -- it's only in scope while that role (or a role
+    # depending on it, e.g. containerapps) is actually executing within a
+    # play. This play never invokes that role chain, so it has to be
+    # restated here explicitly rather than assumed available. No
+    # host_vars/group_vars override this anywhere in the fleet, so this
+    # matches boxship's own default value exactly.
+    containers_user: containers
+
+  tasks:
+    # Same two tasks as roles/containerapps/tasks/main.yml's own
+    # "Compute containers user's XDG_RUNTIME_DIR" -- recomputed fresh
+    # here rather than relying on that role's set_fact having already
+    # run for this host earlier in the same ansible-playbook invocation,
+    # so this play stays correct even run on its own.
+    - name: Look up the containers user's uid
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ containers_user }}"
+
+    - name: Compute containers user's XDG_RUNTIME_DIR
+      ansible.builtin.set_fact:
+        containers_xdg_runtime_dir: "/run/user/{{ ansible_facts.getent_passwd[containers_user][1] }}"
+
+    - name: List Gitea's existing authentication sources
+      ansible.builtin.command:
+        cmd: podman exec systemd-gitea gitea admin auth list
+      become_user: "{{ containers_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "{{ containers_xdg_runtime_dir }}"
+      register: gitea_auth_list
+      changed_when: false
+
+    - name: Add the FreeIPA LDAP authentication source to Gitea
+      # add-ldap, not add-ldap-bind-dn -- confirmed via `gitea admin auth
+      # --help` against the actual installed 1.26.4 image; the latter
+      # isn't a real subcommand in this version (add-ldap-simple is the
+      # direct-bind-as-user variant, closer to Dovecot's auth_bind
+      # approach, but doesn't support the search-then-bind flow this
+      # needs). --synchronize-users keeps Gitea's local user table in
+      # sync with FreeIPA on each login/sync cycle -- same "FreeIPA stays
+      # authoritative" intent as Keycloak/Authentik's own federation
+      # setup. This uses a service bind account (svc-gitea-bind) to
+      # search-then-bind, same shape as Keycloak/Grafana.
+      ansible.builtin.command:
+        argv:
+          - podman
+          - exec
+          - systemd-gitea
+          - gitea
+          - admin
+          - auth
+          - add-ldap
+          - --name
+          - freeipa
+          - --security-protocol
+          - LDAPS
+          - --host
+          - "freeipa.{{ base_domain }}"
+          - --port
+          - "636"
+          - --bind-dn
+          - "uid=svc-gitea-bind,cn=users,cn=accounts,{{ freeipa_basedn }}"
+          - --bind-password
+          - "{{ freeipa_gitea_bind_password }}"
+          - --user-search-base
+          - "cn=users,cn=accounts,{{ freeipa_basedn }}"
+          - --user-filter
+          - "(&(objectClass=person)(uid=%s))"
+          - --username-attribute
+          - uid
+          - --firstname-attribute
+          - givenname
+          - --surname-attribute
+          - sn
+          - --email-attribute
+          - mail
+          - --synchronize-users
+      become_user: "{{ containers_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "{{ containers_xdg_runtime_dir }}"
+      no_log: true
+      when: "'freeipa' not in gitea_auth_list.stdout"

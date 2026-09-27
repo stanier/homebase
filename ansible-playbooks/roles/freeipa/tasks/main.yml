@@ -86,9 +86,9 @@
     - freeipa_enabled
     - not freeipa_default_conf.stat.exists
 
-# --- Plan 3: LDAP bind accounts for Keycloak/Authentik -----------------
+# --- Plan 3: LDAP bind accounts for Keycloak/Authentik/Grafana/Gitea ---
 
-- name: Create LDAP bind service accounts for Keycloak/Authentik
+- name: Create LDAP bind service accounts for Keycloak/Authentik/Grafana/Gitea
   # krbpasswordexpiration far in the future: FreeIPA normally flags an
   # admin-set password as requiring an interactive change at next login
   # (fine for a real user, useless for a service account that only ever
@@ -115,6 +115,10 @@
       password: "{{ freeipa_keycloak_bind_password }}"
     - name: svc-authentik-bind
       password: "{{ freeipa_authentik_bind_password }}"
+    - name: svc-grafana-bind
+      password: "{{ freeipa_grafana_bind_password }}"
+    - name: svc-gitea-bind
+      password: "{{ freeipa_gitea_bind_password }}"
   loop_control:
     label: "{{ item.name }}"
   no_log: true

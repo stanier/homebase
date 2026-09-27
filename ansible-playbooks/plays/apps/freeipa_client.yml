@@ -11,6 +11,27 @@
 # (the Proxmox web UI) that IPA enrollment risks interfering with --
 # out of scope for now, see docs/Typical_Procedure.md.
 #
+# dns is also deliberately excluded, same reasoning as freeipa itself:
+# ipa-client-install has no --server override here, so it relies
+# entirely on DNS SRV discovery (_kerberos._tcp.{{ base_domain }} etc.)
+# to find the KDC -- and those SRV records live in dns's own BIND zone
+# (see host_vars/dns.yml). Enrolling dns as a FreeIPA client would make
+# the one thing FreeIPA's own client bootstrapping depends on also
+# depend on FreeIPA being reachable for its login access -- a circular
+# dependency where a FreeIPA outage risks taking SSH access to the DNS
+# host down with it, the same "stay outside IPA" reasoning
+# freeipa_ssh_access.yml's own comment already applies to the
+# automation service account. dns keeps key-only SSH via whatever
+# access it already had before Plan 4, not SSSD.
+#
+# Excluded via host_vars/dns.yml's freeipa_client_enabled: false, NOT a
+# ":!dns" clause on the hosts: pattern below -- "dns" is ambiguously
+# both a host name and a group name in this inventory (the [dns] group
+# also contains dnsguard, for their shared port-53 firewall rule), and
+# a ":!dns" pattern silently excludes group members too, dropping
+# dnsguard from enrollment along with it. Confirmed via `ansible -i
+# inventory/<env> "vm:!freeipa:!dns" --list-hosts`.
+#
 # Requires plays/apps/freeipa.yml to have already run against this
 # environment, AND plays/network/firewall.yml to have applied
 # host_vars/freeipa.yml's widened LDAP/Kerberos rule (reachable from

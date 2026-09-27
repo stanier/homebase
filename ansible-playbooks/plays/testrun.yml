@@ -19,6 +19,10 @@
   tags: podman
 - import_playbook: apps/keycloak_ldap_federation.yml
   tags: keycloak_ldap_federation
+- import_playbook: apps/gitea_ldap_auth.yml
+  tags: gitea_ldap_auth
+- import_playbook: apps/keycloak_vaultwarden_client.yml
+  tags: keycloak_vaultwarden_client
 - import_playbook: system/logging.yml
   tags: logging
 - import_playbook: system/auditd.yml

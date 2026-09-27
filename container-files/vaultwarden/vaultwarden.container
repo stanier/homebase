@@ -5,11 +5,37 @@ Wants=network-online.target
 
 [Container]
 Image=docker.io/vaultwarden/server:1.37.3-alpine
+# Network=host, not the default rootless bridge -- Vaultwarden's own
+# server-side OIDC discovery fetch (SSO_AUTHORITY, host_vars) has to
+# reach this same host's own Caddy vhost at
+# https://keycloak.{{ base_domain }}, and a bridged rootless container
+# generally can't loop back out to its own host's external IP (hairpin
+# NAT -- confirmed via "Connection refused" hitting container-sandbox's
+# own app_ip:443 from inside this container). Same reasoning as
+# caddy.container/dovecot.container's own Network=host. ROCKET_PORT
+# replaces PublishPort's old 8082:80 mapping -- under Network=host
+# there's no port publishing, the container just binds 8082 directly on
+# the host, which is already what Caddy's own reverse_proxy target
+# (host_vars/container-sandbox.yml) expects.
+Network=host
 Environment=SIGNUPS_ALLOWED=false
+Environment=ROCKET_PORT=8082
 EnvironmentFile=/srv/containers/container-files/vaultwarden/.env
-PublishPort=8082:80
+# The fleet's offline root CA (same one Caddy's own certs chain to) --
+# needed for the SSO_AUTHORITY fetch above to pass TLS verification.
+# Mounting it into /usr/local/share/ca-certificates/ alone isn't enough
+# on its own -- confirmed the image's /start.sh never actually calls
+# update-ca-certificates itself (had to run it by hand to get past
+# "certificate verify failed"). The second mount below is what actually
+# makes it stick: /start.sh sources every *.sh under /etc/vaultwarden.d/
+# before exec'ing the real vaultwarden binary -- the image's own
+# sanctioned extension point -- so a one-line script there runs
+# update-ca-certificates synchronously before Vaultwarden ever starts,
+# no race with a separate post-start hook.
+Volume=/srv/containers/container-files/vaultwarden/root-ca.crt:/usr/local/share/ca-certificates/root-ca.crt:ro,z
+Volume=/srv/containers/container-files/vaultwarden/update-ca-certificates.sh:/etc/vaultwarden.d/update-ca-certificates.sh:ro,z
 Volume=vaultwarden_vaultwarden_data:/data
-HealthCmd=wget -q --spider http://127.0.0.1:80/alive
+HealthCmd=wget -q --spider http://127.0.0.1:8082/alive
 HealthInterval=30s
 HealthTimeout=5s
 HealthStartPeriod=15s

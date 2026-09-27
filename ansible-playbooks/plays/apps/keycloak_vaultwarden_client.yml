@@ -1,0 +1,62 @@
+---
+# Registers Vaultwarden as an OIDC client in Keycloak. Vaultwarden's own
+# SSO support is OIDC-only (no LDAP), so it federates through Keycloak
+# (already LDAP-federated to FreeIPA -- see keycloak_ldap_federation.yml)
+# rather than a second, separate LDAP integration.
+#
+# Same shape/timing as keycloak_ldap_federation.yml: runs after
+# plays/apps/podman.yml against Keycloak's own admin REST API, since
+# there's no config file for an OIDC client registration to template in
+# instead.
+#
+# The client secret is vault-supplied (keycloak_vaultwarden_client_secret),
+# not left for Keycloak to generate, so Vaultwarden's own SSO_CLIENT_SECRET
+# env var (host_vars/container-sandbox.yml) can be templated in the same
+# pass without a separate "read the secret back from Keycloak" step.
+#
+# Only wired into testzone for now -- dangerzone doesn't run Vaultwarden
+# yet (see container-files/docs/roadmap.md). Safe to run against
+# dangerzone once it does; this play itself doesn't assume Vaultwarden's
+# own host_vars exist.
+- name: Register Vaultwarden as a Keycloak OIDC client, federated via FreeIPA
+  hosts: keycloak
+  become: false
+  gather_facts: false
+
+  tasks:
+    - name: Wait for Keycloak's API to be ready
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8080/realms/master
+        status_code: 200
+      register: keycloak_ready
+      until: keycloak_ready.status | default(0) == 200
+      retries: 30
+      delay: 5
+
+    - name: Add/update the Vaultwarden OIDC client
+      community.general.keycloak_client:
+        auth_keycloak_url: http://127.0.0.1:8080
+        auth_realm: master
+        auth_username: admin
+        auth_password: "{{ keycloak_bootstrap_password }}"
+        realm: master
+        client_id: vaultwarden
+        name: Vaultwarden
+        state: present
+        enabled: true
+        public_client: false
+        protocol: openid-connect
+        standard_flow_enabled: true
+        direct_access_grants_enabled: false
+        implicit_flow_enabled: false
+        service_accounts_enabled: false
+        secret: "{{ keycloak_vaultwarden_client_secret }}"
+        redirect_uris:
+          - "https://vaultwarden.{{ base_domain }}/identity/connect/oidc-signin"
+        web_origins:
+          - "https://vaultwarden.{{ base_domain }}"
+      register: keycloak_vaultwarden_client_result
+      until: keycloak_vaultwarden_client_result is succeeded
+      retries: 3
+      delay: 10
+      no_log: true

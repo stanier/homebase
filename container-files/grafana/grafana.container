@@ -9,6 +9,11 @@ PublishPort=3000:3000
 EnvironmentFile=/srv/containers/container-files/grafana/.env
 Volume=grafana_grafana_data:/var/lib/grafana:U
 Volume=/srv/containers/container-files/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro,z
+# LDAP config file + the FreeIPA CA it needs to trust the LDAPS
+# connection -- see host_vars/metrics1.yml's containerapps_secret_files
+# and GF_AUTH_LDAP_CONFIG_FILE.
+Volume=/srv/containers/container-files/grafana/ldap.toml:/etc/grafana/ldap.toml:ro,z
+Volume=/srv/containers/container-files/grafana/freeipa-ca.crt:/etc/grafana/freeipa-ca.crt:ro,z
 HealthCmd=wget -q --spider http://127.0.0.1:3000/api/health
 HealthInterval=30s
 HealthTimeout=5s
