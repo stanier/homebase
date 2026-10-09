@@ -1,0 +1,53 @@
+[Unit]
+Description=Matrix homeserver (Synapse)
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+
+[Container]
+Image=ghcr.io/element-hq/synapse:v1.162.0
+Network=matrix.network
+# Client API (and /_synapse/client, which carries the OIDC callback).
+# No 8448 -- federation is off (see homeserver.yaml in host_vars/chat1.yml).
+PublishPort=8008:8008
+# Metrics listener. Caddy never proxies it; host_vars' firewall_rules
+# open it to metrics1 alone, for vmagent.
+PublishPort=9000:9000
+# The image's /start.py drops to uid 991 via gosu by default, and in
+# "run" mode never chowns /data (only "generate" mode does), so 991
+# can't write to a fresh named volume, and it can't read the 0600
+# Ansible-templated config files either. UID/GID=0 makes gosu "drop" to
+# container root instead, which under rootless Podman is just the
+# unprivileged containers user on the host.
+Environment=UID=0
+Environment=GID=0
+Environment=SYNAPSE_CONFIG_PATH=/config/homeserver.yaml
+# The fleet's offline root CA (the one Caddy's certs chain to), needed
+# for the server-side OIDC discovery/token fetches against
+# https://keycloak.{{ base_domain }}. update-ca-certificates appends it
+# to the image's Debian bundle (it's a python:*-slim base, so
+# ca-certificates is already there) before handing off to the image's
+# own entrypoint. That keeps public CAs working too, for the push
+# gateway. SSL_CERT_FILE pins pyOpenSSL to that same bundle rather than
+# whatever OPENSSLDIR cryptography's wheel was compiled with.
+Environment=SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+Volume=/srv/containers/container-files/matrix/root-ca.crt:/usr/local/share/ca-certificates/root-ca.crt:ro,z
+Entrypoint=/bin/sh
+Exec=-c "update-ca-certificates >/dev/null && exec /start.py run"
+Volume=/srv/containers/container-files/matrix/data/homeserver.yaml:/config/homeserver.yaml:ro,z
+# From the vault rather than generated on first start: run mode doesn't
+# generate missing keys anyway, and losing this key changes the
+# server's identity.
+Volume=/srv/containers/container-files/matrix/data/signing.key:/config/signing.key:ro,z
+# media_store lives here.
+Volume=matrix_synapse_data:/data
+HealthCmd=curl -fSs http://localhost:8008/health
+HealthInterval=30s
+HealthTimeout=5s
+HealthStartPeriod=30s
+HealthRetries=3
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

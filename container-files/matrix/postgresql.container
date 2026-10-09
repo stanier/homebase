@@ -1,0 +1,28 @@
+[Unit]
+Description=Matrix (Synapse) PostgreSQL
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/library/postgres:16-alpine
+Network=matrix.network
+NetworkAlias=postgresql
+Environment=POSTGRES_USER=synapse
+Environment=POSTGRES_DB=synapse
+# Synapse refuses to start against a database whose collation/ctype
+# isn't C. Only read by initdb on an empty volume -- changing it later
+# does nothing to an existing database (dump/recreate/restore instead).
+Environment="POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+EnvironmentFile=/srv/containers/container-files/matrix/.env
+Volume=matrix_postgresql:/var/lib/postgresql/data
+HealthCmd=pg_isready -U synapse -d synapse
+HealthInterval=30s
+HealthTimeout=5s
+HealthStartPeriod=15s
+HealthRetries=3
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,24 @@
+[Unit]
+Description=Element Web (Matrix client)
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/vectorim/element-web:v1.12.30
+# The image's nginx runs as a non-root user, so listen above 1024 rather
+# than relying on the container netns letting it bind 80.
+Environment=ELEMENT_WEB_PORT=8080
+PublishPort=8080:8080
+# Templated from host_vars/chat1.yml (needs base_domain).
+Volume=/srv/containers/container-files/matrix/data/element-config.json:/app/config.json:ro,z
+HealthCmd=wget -q --spider http://127.0.0.1:8080/
+HealthInterval=30s
+HealthTimeout=5s
+HealthStartPeriod=15s
+HealthRetries=3
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
