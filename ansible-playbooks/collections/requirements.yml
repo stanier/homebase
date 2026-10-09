@@ -8,3 +8,9 @@ collections:
   - name: ansible.posix
     version: ">=2.1.0"
   - name: community.crypto
+  # FreeIPA's own modules (ipauser/ipagroup/ipahostgroup/ipahbacrule/
+  # ipasudorule) -- plays/apps/freeipa_ssh_access.yml. Used instead of
+  # community.general.ipa_*, whose 12.x+ response check treats IPA's
+  # normal "failed: {member: {host: [], ...}}" (all-empty = success)
+  # as an error on every member add.
+  - name: freeipa.ansible_freeipa

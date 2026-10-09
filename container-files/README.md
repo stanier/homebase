@@ -59,6 +59,7 @@ A host only runs the services listed for it in
 | `minio` | Self-hosted S3-compatible object storage |
 | `syslog` | Central rsyslog receiver for the fleet |
 | `node-exporter` / `podman-exporter` | Prometheus metrics exporters (host / podman) |
+| `blackbox-exporter` | Probes services from the outside (HTTPS through Caddy, TLS cert expiry, DNS) for vmagent to scrape |
 | `trivy` | Vulnerability/SBOM scanner (server mode), for `gitea-runner` CI to scan images against |
 | `uptime-kuma` | External-facing uptime/status monitoring |
 | `wazuh` | Endpoint security (HIDS): manager + indexer + dashboard (agents installed by `ansible-playbooks/roles/wazuh_agent`) |

@@ -36,21 +36,57 @@
       block:
         - name: Compute this host's Tofu module target address
           ansible.builtin.set_fact:
-            tofu_target: module.vm_node{{ groups['proxmox'].index(proxmox_vm.node) + 1 }}["{{ inventory_hostname }}"]
+            tofu_target: module.vm["{{ inventory_hostname }}"]
 
         - name: Collect every selected host's Tofu target into one list
           ansible.builtin.set_fact:
             tofu_targets: "{{ ansible_play_hosts_all | map('extract', hostvars, 'tofu_target') | list }}"
           run_once: true
 
+        # Same two variables scripts/tofu-with-vault-secrets.sh exports:
+        # the [proxmox] node names (providers.tf's for_each keys) and a
+        # {node: token secret} map.
         - name: Compute the Proxmox API token secrets Tofu's providers need
           ansible.builtin.set_fact:
-            tofu_secret_env: "{{ (tofu_secret_env | default({})) | combine({'TF_VAR_node' ~ (node_idx + 1) ~ '_api_token_secret': lookup('vars', 'vault_' ~ item ~ '_proxmox_api_token_secret')}) }}"
+            tofu_api_token_secrets: "{{ (tofu_api_token_secrets | default({})) | combine({item: lookup('vars', 'vault_' ~ item ~ '_proxmox_api_token_secret')}) }}"
           loop: "{{ groups['proxmox'] }}"
-          loop_control:
-            index_var: node_idx
           run_once: true
           no_log: true
+
+        - name: Build the Tofu environment from those secrets
+          ansible.builtin.set_fact:
+            tofu_secret_env:
+              TF_VAR_proxmox_nodes: "{{ groups['proxmox'] | to_json }}"
+              TF_VAR_proxmox_api_token_secrets: "{{ tofu_api_token_secrets | to_json }}"
+          run_once: true
+          no_log: true
+
+        # Outside testzone, Tofu's destroy does a graceful ACPI shutdown
+        # first (environments/locals.tf's stop_on_destroy) and waits it
+        # out -- ~4.5 minutes of every testrun.sh --clean. That's the
+        # right default for an ad-hoc destroy, but --clean is throwing
+        # these disks away anyway, so there's nothing worth flushing:
+        # hard-stop them here (in parallel, one task per host) and the
+        # destroy below finds them already off. stop_on_destroy itself
+        # can't just be flipped for --clean runs -- the provider reads it
+        # from state at destroy time, not from config.
+        - name: Hard-stop this host's VM ahead of a --clean destroy
+          community.proxmox.proxmox_kvm:
+            api_host: "{{ hostvars[proxmox_vm.node].ansible_host }}"
+            api_user: "{{ hostvars[proxmox_vm.node].proxmox_api_user }}"
+            api_token_id: "{{ hostvars[proxmox_vm.node].proxmox_api_token_id }}"
+            api_token_secret: "{{ hostvars[proxmox_vm.node].proxmox_api_token_secret }}"
+            validate_certs: "{{ proxmox_api_validate_certs | default(false) }}"
+            node: "{{ proxmox_vm.node }}"
+            vmid: "{{ proxmox_vmid }}"
+            state: stopped
+            force: true
+          register: tofu_clean_stop
+          # A host whose VM doesn't exist yet has nothing to stop.
+          failed_when:
+            - tofu_clean_stop is failed
+            - "'does not exist' not in (tofu_clean_stop.msg | default(''))"
+          when: tofu_clean | bool
 
         - name: Destroy the selected hosts' VMs
           community.general.terraform:
@@ -108,7 +144,7 @@
     # management_ip, not app_ip -- onboarding.yml and every later play
     # connect via management_ip (hosts.ini's ansible_host default) over
     # the management-network bastion (group_vars/vm.yml's
-    # ansible_ssh_common_args ProxyCommand to 192.168.104.246 -- see
+    # ansible_ssh_common_args ProxyCommand through the bastion -- see
     # onboarding.yml's own comment calling management_ip "the
     # non-routed management network"), so that's the path that actually
     # needs to be up before onboarding.yml's very next task runs.

@@ -34,9 +34,10 @@ Never run bare `tofu` — it's what pulls API token secrets from the
 vault and selects the workspace. A bare `tofu apply` will be missing
 credentials or (worse) run against whatever workspace was last
 selected. The wrapper prompts once for the vault password (same
-prompt as `ansible-playbooks/testrun.sh`), exports one
-`TF_VAR_<alias>_api_token_secret` per Proxmox node for that one
-process, and never writes the password or the tokens to disk. Assumes
+prompt as `ansible-playbooks/testrun.sh`), exports the
+`[proxmox]` node names and their API token secrets
+(`TF_VAR_proxmox_nodes` / `TF_VAR_proxmox_api_token_secrets`) for that
+one process, and never writes the password or the tokens to disk. Assumes
 `ansible-playbooks` is a sibling checkout; set
 `ANSIBLE_PLAYBOOKS_DIR` if yours lives elsewhere.
 

@@ -124,7 +124,7 @@
     - name: Render and upload the mgmt-NIC-rename cloud-init snippet
       ansible.builtin.template:
         src: mgmt-nic-rename.yaml.j2
-        dest: "/var/lib/vz/snippets/{{ inventory_hostname }}-mgmt-rename.yaml"
+        dest: "{{ proxmox_snippet_dir }}/{{ inventory_hostname }}-mgmt-rename.yaml"
         owner: root
         group: root
         mode: "0644"
@@ -177,6 +177,9 @@
         vmid: "{{ proxmox_vmid }}"
         cores: "{{ proxmox_vm.cores | default(2) }}"
         memory: "{{ proxmox_vm.memory | default(2048) }}"
+        balloon: >-
+          {{ proxmox_vm.memory_min
+             | default(((proxmox_vm.memory | default(2048)) * proxmox_vm_balloon_ratio) | int) }}
         cpu: "{{ proxmox_vm.cpu | default(proxmox_vm_cpu) }}"
         vga: "{{ proxmox_vm.vga | default(proxmox_vm_vga) }}"
         net:
@@ -186,8 +189,8 @@
                if management_mac_prefix | length > 0
                else 'virtio,bridge=' ~ proxmox_vm_mgmt_bridge }}
         ipconfig:
-          ipconfig0: "ip={{ app_ip }}/{{ proxmox_network_prefix }},gw={{ proxmox_vm_app_gateway }}"
-          ipconfig1: "ip={{ management_ip }}/{{ proxmox_network_prefix }}"
+          ipconfig0: "ip={{ app_ip }}/{{ app_network_prefix }},gw={{ proxmox_vm_app_gateway }}"
+          ipconfig1: "ip={{ management_ip }}/{{ management_network_prefix }}"
         ciuser: "{{ proxmox_vm_ciuser }}"
         sshkeys: "{{ proxmox_vm_ssh_public_key }}"
         nameservers: "{{ proxmox_vm_nameservers }}"

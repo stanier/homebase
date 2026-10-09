@@ -1,0 +1,59 @@
+---
+# Reboots inventory_hostname through the Proxmox API (state: restarted
+# without force == POST status/reboot == `qm reboot`), not from inside
+# the guest. The difference matters: an in-guest reboot keeps the same
+# QEMU process, so pending hardware changes (a new balloon device,
+# cores/memory, NICs) never apply. A Proxmox-side reboot shuts the guest
+# down cleanly and starts a fresh QEMU process with the pending config.
+#
+# Run via plays/vm/reboot_vms.yml, which goes one host at a time.
+#
+# Node comes from proxmox_vm.node -- the same field Tofu places VMs by
+# (scripts/vm-hostvars.py) -- rather than proxmox_node, which has
+# drifted from reality for some hosts in the past.
+- name: Assert this host's Proxmox node/vmid are known
+  ansible.builtin.assert:
+    that:
+      - proxmox_vm.node is defined
+      - proxmox_vmid is defined
+    fail_msg: >-
+      {{ inventory_hostname }} has no proxmox_vm.node/proxmox_vmid set --
+      nothing to reboot through Proxmox.
+
+- name: Look up this VM's Proxmox node's own API credentials
+  ansible.builtin.set_fact:
+    proxmox_vm_api_host: "{{ hostvars[proxmox_vm.node].ansible_host }}"
+    proxmox_vm_api_user: "{{ hostvars[proxmox_vm.node].proxmox_api_user }}"
+    proxmox_vm_api_token_id: "{{ hostvars[proxmox_vm.node].proxmox_api_token_id }}"
+    proxmox_vm_api_token_secret: "{{ hostvars[proxmox_vm.node].proxmox_api_token_secret }}"
+
+- name: "Reboot {{ inventory_hostname }} ({{ proxmox_vmid }}) through Proxmox"
+  community.proxmox.proxmox_kvm:
+    node: "{{ proxmox_vm.node }}"
+    vmid: "{{ proxmox_vmid }}"
+    state: restarted
+    timeout: "{{ proxmox_reboot_timeout }}"
+  module_defaults:
+    group/community.proxmox.proxmox:
+      api_host: "{{ proxmox_vm_api_host }}"
+      api_user: "{{ proxmox_vm_api_user }}"
+      api_token_id: "{{ proxmox_vm_api_token_id }}"
+      api_token_secret: "{{ proxmox_vm_api_token_secret }}"
+      validate_certs: "{{ proxmox_api_validate_certs }}"
+      api_timeout: "{{ proxmox_api_timeout }}"
+  delegate_to: localhost
+  become: false
+  vars:
+    # Same interpreter selection as snapshot.yml -- see its comment.
+    ansible_python_interpreter: >-
+      {{ (lookup('env', 'VIRTUAL_ENV') ~ '/bin/python3')
+         if lookup('env', 'VIRTUAL_ENV')
+         else ansible_playbook_python }}
+
+# The reboot task returns once Proxmox's reboot task finishes, which is
+# when QEMU is back up -- not when sshd is. Wait for the guest itself
+# before the play moves on to the next host.
+- name: Wait for {{ inventory_hostname }} to come back over SSH
+  ansible.builtin.wait_for_connection:
+    delay: 10
+    timeout: "{{ proxmox_reboot_timeout }}"

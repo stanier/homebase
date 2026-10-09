@@ -4,9 +4,26 @@
 # (this file runs on the node's normal SSH connection, same as every
 # other role in this repo); every API task below is delegated to
 # localhost.
+#
+# The staged file has to sit exactly where the import task's
+# "<STORAGE>:import/<FILE>" volid resolves to, which depends on
+# proxmox_storage_pool's own path on this node (e.g. "local" ->
+# /var/lib/vz, "data" -> /mount/data on homelab). Ask Proxmox rather
+# than hardcoding it, so the two can't drift apart per node.
+- name: "{{ tmpl_key }}: resolve the staged image's path on this node's storage"
+  ansible.builtin.command:
+    argv: ["pvesm", "path", "{{ proxmox_storage_pool }}:import/{{ tmpl_key }}.qcow2"]
+  register: staged_image_path
+  changed_when: false
+  become: true
+
+- name: "{{ tmpl_key }}: remember the staged image path"
+  ansible.builtin.set_fact:
+    staged_image: "{{ staged_image_path.stdout | trim }}"
+
 - name: "{{ tmpl_key }}: ensure the image staging dir exists"
   ansible.builtin.file:
-    path: "{{ proxmox_image_staging_dir }}"
+    path: "{{ staged_image | dirname }}"
     state: directory
     mode: "0755"
   become: true
@@ -14,7 +31,7 @@
 - name: "{{ tmpl_key }}: download the cloud image to this node"
   ansible.builtin.get_url:
     url: "{{ tmpl.image_url }}"
-    dest: "{{ proxmox_image_staging_dir }}/{{ tmpl_key }}.qcow2"
+    dest: "{{ staged_image }}"
     mode: "0644"
   become: true
 
@@ -31,13 +48,49 @@
 # not others. --network is required: without it the appliance
 # virt-customize boots to run --install in has no route out to the
 # guest's package mirrors, so every --install would just fail offline.
-# --install runs each package as its own linked operation in the order
-# given on the command line (one appliance boot covers all of them), and
-# the final --run-command clears the guest's package-manager cache so a
-# clone's first real install isn't confused by a stale index the way the
-# upstream Rocky cloud image already is on its own, unbaked dnf cache
-# (see common/tasks/acl.yml's "stale dnf cache" task/comment -- same
-# underlying dnf behaviour, unrelated cause).
+#
+# Steps, in command-line order (one appliance boot covers all of them):
+# - (RedHat) append proxmox_template_dnf_conf_lines to dnf.conf first,
+#   so the bake's own upgrade/installs already use them.
+# - (RedHat) pin /etc/kernel/cmdline to the image's own default kernel
+#   args (minus crashkernel=). Without it, 20-grub.install builds the BLS
+#   entry for any kernel --update pulls in from /proc/cmdline -- i.e.
+#   the libguestfs appliance's (root= its own disk, quiet, panic=1) --
+#   and makes that entry the default, so every clone hangs at "Welcome
+#   to GRUB!". Removed again at the end so clones' future kernel
+#   installs go back to their real /proc/cmdline.
+# - --update everything the upstream image shipped, so a fresh clone's
+#   first common/update_packages.yml run only pulls what changed since
+#   this template was built, not everything since upstream cut the
+#   image -- that full upgrade was ~10 minutes of every testrun.sh
+#   --clean. Rebuild templates periodically to keep the gap small (see
+#   build_templates.yml).
+# - --install each package as its own operation, in list order.
+# - --uninstall proxmox_template_bake_uninstall_packages.
+# - (RedHat) strip crashkernel= from /etc/default/grub and every
+#   installed kernel's entry (incl. one --update just pulled in) --
+#   after kdump-utils' own reinstall hook is gone with the package.
+# - disable proxmox_template_bake_disabled_services, mask
+#   proxmox_template_bake_masked_services.
+# - clear the package-manager cache, so a clone's first real install
+#   isn't confused by a stale index the way the upstream Rocky cloud
+#   image's own dnf cache is. (RedHat) Since that's exactly what
+#   common/tasks/acl.yml's "dnf clean all" exists for, --touch its
+#   sentinel too, so clones don't wipe and re-download repo metadata a
+#   second time.
+# - (RedHat) relabel the whole filesystem with the guest's own setfiles.
+#   The appliance boots selinux=0, so every file rpm/useradd wrote above
+#   (incl. a --update'd /usr/lib/systemd/systemd) is left unlabeled.
+#   virt-customize's own relabel needs libguestfs' "selinuxrelabel"
+#   feature, which Debian's (i.e. Proxmox's) build lacks -- it silently
+#   falls back to touching /.autorelabel, and a clone then freezes at
+#   boot ("Failed to allocate manager object") because an unlabeled
+#   systemd never transitions to init_t to get as far as relabelling.
+#   So: relabel here, drop the /.autorelabel, and --no-selinux-relabel
+#   so virt-customize doesn't touch it again after us.
+# - (RedHat) truncate /etc/machine-id -- systemd's %post during
+#   --update fills it in, which would give every clone the same ID;
+#   empty, each clone generates its own on first boot like upstream.
 - name: "{{ tmpl_key }}: bake baseline packages into the staged image"
   ansible.builtin.command:
     # Each package gets its own --install so virt-customize's "run
@@ -48,15 +101,70 @@
     # list expression throughout -- no shell involved.
     argv: >-
       {{
-        ['virt-customize', '-a', proxmox_image_staging_dir ~ '/' ~ tmpl_key ~ '.qcow2', '--network']
+        ['virt-customize', '-a', staged_image, '--network']
+        + (bake_redhat_args + bake_kernel_cmdline_args if tmpl.os_family == 'RedHat' else [])
+        + ['--update']
         + bake_install_args
+        + bake_uninstall_args
+        + (bake_crashkernel_args + ['--delete', '/etc/kernel/cmdline'] if tmpl.os_family == 'RedHat' else [])
+        + bake_disable_args
+        + bake_mask_args
         + ['--run-command', 'dnf clean all' if tmpl.os_family == 'RedHat' else 'apt-get clean']
+        + (['--touch', '/etc/.dnf-cache-cleared'] + bake_selinux_args if tmpl.os_family == 'RedHat' else [])
       }}
   vars:
     bake_install_args: >-
       {%- set ns = namespace(args=[]) -%}
       {%- for pkg in proxmox_template_bake_packages[tmpl.os_family] -%}
         {%- set ns.args = ns.args + ['--install', pkg] -%}
+      {%- endfor -%}
+      {{ ns.args }}
+    bake_uninstall_args: >-
+      {%- set ns = namespace(args=[]) -%}
+      {%- for pkg in proxmox_template_bake_uninstall_packages.get(tmpl.os_family, []) -%}
+        {%- set ns.args = ns.args + ['--uninstall', pkg] -%}
+      {%- endfor -%}
+      {{ ns.args }}
+    # grubby --info=DEFAULT prints the default entry as shell-quoted
+    # args="..." / root="..." lines; written before --update, so DEFAULT
+    # is still the image's original kernel.
+    bake_kernel_cmdline_args:
+      - --run-command
+      - >-
+        eval "$(grubby --info=DEFAULT | grep -E '^(args|root)=')"
+        && test -n "$root"
+        && echo "root=$root $args" | sed -E 's/ ?crashkernel=[^ ]*//' > /etc/kernel/cmdline
+    bake_crashkernel_args:
+      - --run-command
+      - "sed -i -E 's/ ?crashkernel=[^ \"]*//' /etc/default/grub"
+      - --run-command
+      - grubby --update-kernel=ALL --remove-args=crashkernel
+    bake_disable_args: >-
+      {%- set ns = namespace(args=[]) -%}
+      {%- for svc in proxmox_template_bake_disabled_services.get(tmpl.os_family, []) -%}
+        {%- set ns.args = ns.args + ['--run-command', 'systemctl disable ' ~ svc] -%}
+      {%- endfor -%}
+      {{ ns.args }}
+    bake_mask_args: >-
+      {%- set ns = namespace(args=[]) -%}
+      {%- for svc in proxmox_template_bake_masked_services.get(tmpl.os_family, []) -%}
+        {%- set ns.args = ns.args + ['--run-command', 'systemctl mask ' ~ svc] -%}
+      {%- endfor -%}
+      {{ ns.args }}
+    bake_selinux_args:
+      - --truncate
+      - /etc/machine-id
+      - --run-command
+      - >-
+        setfiles -F -T 0 -e /proc -e /sys -e /dev -e /run -e /boot/efi
+        /etc/selinux/targeted/contexts/files/file_contexts /
+      - --delete
+      - /.autorelabel
+      - --no-selinux-relabel
+    bake_redhat_args: >-
+      {%- set ns = namespace(args=[]) -%}
+      {%- for line in proxmox_template_dnf_conf_lines -%}
+        {%- set ns.args = ns.args + ['--append-line', '/etc/dnf/dnf.conf:' ~ line] -%}
       {%- endfor -%}
       {{ ns.args }}
   become: true
@@ -112,7 +220,7 @@
         # session -- an API token (even root@pam's) hits "Only root can pass
         # arbitrary filesystem paths", so this uses the storage-relative
         # <STORAGE>:import/<FILE> form instead (PVE 9.x+), which resolves to
-        # the same place proxmox_image_staging_dir downloaded the image to.
+        # the same place staged_image (resolved above) downloaded it to.
         import_from: "{{ proxmox_storage_pool }}:import/{{ tmpl_key }}.qcow2"
         create: regular
         state: present
@@ -146,6 +254,6 @@
 
 - name: "{{ tmpl_key }}: remove the staged image file"
   ansible.builtin.file:
-    path: "{{ proxmox_image_staging_dir }}/{{ tmpl_key }}.qcow2"
+    path: "{{ staged_image }}"
     state: absent
   become: true

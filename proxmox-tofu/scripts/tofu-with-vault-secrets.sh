@@ -7,9 +7,8 @@ set -euo pipefail
 # uses (see ansible-playbooks/docs/VAULT.md's "Example: the Proxmox API
 # tokens") -- one vault stays the single source of truth for these
 # instead of forking a second copy into a tfvars file. Which nodes exist
-# and what order they get node1/node2/... aliased in (matching
-# providers.tf/scripts/proxmox-nodes.py) both come from this same
-# environment's hosts.ini [proxmox] group, not a fixed list here.
+# (providers.tf's for_each keys) comes from this same environment's
+# hosts.ini [proxmox] group, not a fixed list here.
 #
 # "Never written to disk" trick: VAULT_PASS only ever lives in this
 # process's own environment, handed to ansible-vault via
@@ -21,7 +20,7 @@ set -euo pipefail
 #
 #   scripts/tofu-with-vault-secrets.sh testzone plan
 #   scripts/tofu-with-vault-secrets.sh testzone apply
-#   scripts/tofu-with-vault-secrets.sh dangerzone import module.vm_node1.proxmox_virtual_environment_vm.this[\"gitea\"] 5202
+#   scripts/tofu-with-vault-secrets.sh dangerzone import 'module.vm["gitea"].proxmox_virtual_environment_vm.this' homelab/5202
 
 if [[ $# -lt 2 ]]; then
     echo "usage: $0 <testzone|dangerzone> <tofu args...>" >&2
@@ -53,8 +52,7 @@ if [[ ! -f "$VAULT_FILE" ]]; then
     exit 1
 fi
 
-# node1/node2/... in [proxmox]'s file order, same convention as
-# scripts/proxmox-nodes.py and scripts/vm-hostvars.py's node_alias.
+# Real node names from [proxmox] -- providers.tf's for_each keys.
 mapfile -t PROXMOX_NODES < <(awk '/^\[proxmox\]/{f=1;next} /^\[/{f=0} f && NF {print $1}' "$HOSTS_INI")
 
 ANSIBLE_VAULT_BIN="$ANSIBLE_PLAYBOOKS_DIR/venv/bin/ansible-vault"
@@ -71,29 +69,23 @@ fi
 
 DECRYPTED="$("$ANSIBLE_VAULT_BIN" view --vault-password-file="$VAULT_PASS_SCRIPT" "$VAULT_FILE")"
 
-extract_secret() {
-    # A sed capture like [^"']* would silently truncate any secret that
-    # happens to contain a quote character -- parse the YAML properly
-    # instead so that can't happen.
-    python3 -c '
-import sys, yaml
-value = yaml.safe_load(sys.stdin).get(sys.argv[1])
-if value is not None:
-    print(value)
-' "$1" <<<"$DECRYPTED"
-}
-
-for i in "${!PROXMOX_NODES[@]}"; do
-    node_name="${PROXMOX_NODES[$i]}"
-    alias="node$((i + 1))"
-    vault_key="vault_${node_name}_proxmox_api_token_secret"
-    secret="$(extract_secret "$vault_key")"
-    if [[ -z "$secret" ]]; then
-        echo "$vault_key not found in $VAULT_FILE" >&2
-        exit 1
-    fi
-    export "TF_VAR_${alias}_api_token_secret=$secret"
-done
+# {node name: token secret} as JSON for var.proxmox_api_token_secrets,
+# from each node's vault_<node>_proxmox_api_token_secret. Parsed with
+# real YAML so a secret containing a quote character can't get silently
+# truncated the way a sed capture would.
+TF_VAR_proxmox_api_token_secrets="$(python3 -c '
+import json, sys, yaml
+vault = yaml.safe_load(sys.stdin)
+secrets = {}
+for node in sys.argv[2:]:
+    value = vault.get(f"vault_{node}_proxmox_api_token_secret")
+    if value is None:
+        sys.exit(f"vault_{node}_proxmox_api_token_secret not found in {sys.argv[1]}")
+    secrets[node] = str(value)
+print(json.dumps(secrets))
+' "$VAULT_FILE" "${PROXMOX_NODES[@]}" <<<"$DECRYPTED")"
+TF_VAR_proxmox_nodes="$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1:]))' "${PROXMOX_NODES[@]}")"
+export TF_VAR_proxmox_api_token_secrets TF_VAR_proxmox_nodes
 
 # Tells scripts/vm-hostvars.py and scripts/proxmox-nodes.py (invoked by
 # environments/data.tf as Tofu `external` data sources) which

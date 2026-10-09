@@ -5,11 +5,9 @@ environments/<env>/locals.tf.
 Reads the fleet's real network topology straight out of the Ansible
 inventory (ansible-playbooks/inventory/<env>, ANSIBLE_INVENTORY_ENV --
 defaults to "dangerzone", see vm-hostvars.py's own comment) instead of
-it being duplicated as Tofu literals:
+it being duplicated as Tofu literals. (Bridges/gateway used to live here
+too; they're per node now, in scripts/proxmox-nodes.py.)
 
-  - group_vars/proxmox/main.yml's proxmox_app_bridge/proxmox_app_gateway/
-    proxmox_mgmt_bridge -- the real bridge names and app-VLAN gateway on
-    turkey/homelab.
   - group_vars/vm.yml's management_mac_prefix/management_interface --
     the locally-administered MAC prefix stamped onto every new VM's
     management NIC, and the guest interface name it gets renamed to.
@@ -20,8 +18,8 @@ resolves group_vars/all/vault.yml and would demand a vault password
 just to read values that are neither secret nor templated.
 
 stdin: the `external` data source's query object (ignored, no inputs
-needed here). stdout: {"json": "<{app_bridge, app_gateway, mgmt_bridge,
-management_mac_prefix, management_interface} as a JSON string>"} --
+needed here). stdout: {"json": "<{management_mac_prefix,
+management_interface} as a JSON string>"} --
 same nested-string convention as vm-hostvars.py, for the same reason
 (`external` only allows string values in its result).
 """
@@ -57,16 +55,11 @@ def main():
     inventory_env = os.environ.get("ANSIBLE_INVENTORY_ENV", "dangerzone")
     inventory_dir = ansible_playbooks_dir / "inventory" / inventory_env
 
-    proxmox_vars_path = inventory_dir / "group_vars" / "proxmox" / "main.yml"
     vm_vars_path = inventory_dir / "group_vars" / "vm.yml"
 
-    proxmox_vars = load_yaml(proxmox_vars_path)
     vm_vars = load_yaml(vm_vars_path)
 
     result = {
-        "app_bridge": require(proxmox_vars, "proxmox_app_bridge", proxmox_vars_path),
-        "app_gateway": require(proxmox_vars, "proxmox_app_gateway", proxmox_vars_path),
-        "mgmt_bridge": require(proxmox_vars, "proxmox_mgmt_bridge", proxmox_vars_path),
         "management_mac_prefix": require(
             vm_vars, "management_mac_prefix", vm_vars_path
         ),

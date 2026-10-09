@@ -3,4 +3,7 @@
   ansible.builtin.package:
     name: "{{ ['podman'] + podman_pkg_deps[ansible_facts['pkg_mgr']] }}"
     state: present
-    update_cache: true
+    # apt only -- a fresh Debian clone may have no package index yet.
+    # On dnf this forces a full repo metadata re-download every run
+    # (~60s per host) even though dnf refreshes stale metadata itself.
+    update_cache: "{{ ansible_facts['pkg_mgr'] == 'apt' }}"

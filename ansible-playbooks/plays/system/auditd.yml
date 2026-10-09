@@ -2,6 +2,9 @@
 - name: Configure host-level audit logging
   hosts: all
   become: true
+  # Every task here is per-host only, so let each host run ahead rather
+  # than wait at every task for the slowest one (linear's default).
+  strategy: free
 
   roles:
     - auditd

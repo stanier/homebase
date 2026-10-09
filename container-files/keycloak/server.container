@@ -8,6 +8,11 @@ Image=quay.io/keycloak/keycloak@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c059
 Exec=start
 Network=keycloak.network
 PublishPort=8080:8080
+# Keycloak's management interface (/metrics, /health). Separate from
+# 8080 on purpose: Caddy only ever proxies 8080, so metrics never reach
+# the public vhost; host_vars' firewall_rules open 9000 to metrics1
+# alone, for vmagent's keycloak job.
+PublishPort=9000:9000
 Environment=KC_DB=postgres
 Environment=KC_DB_URL_HOST=postgresql
 Environment=KC_DB_URL_DATABASE=keycloak
@@ -19,6 +24,10 @@ Environment=KC_DB_USERNAME=keycloak
 # of what it sees on its own plain-HTTP listener.
 Environment=KC_HTTP_ENABLED=true
 Environment=KC_PROXY_HEADERS=xforwarded
+Environment=KC_METRICS_ENABLED=true
+# keycloak_user_events_total{event,error} -- login successes/failures by
+# reason, for Grafana's Security dashboard.
+Environment=KC_EVENT_METRICS_USER_ENABLED=true
 # Trusts FreeIPA's own Dogtag-issued CA for the LDAPS connection its
 # user federation provider makes (Plan 3) -- a separate, unrelated CA
 # from the fleet's own Caddy-signed one. KC_TRUSTSTORE_PATHS accepts a

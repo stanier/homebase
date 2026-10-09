@@ -1,0 +1,28 @@
+[Unit]
+Description=Blackbox exporter
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/prom/blackbox-exporter:v0.28.0
+# Published on loopback only -- vmagent (Network=host, same machine) is
+# the only thing that should be asking it to probe anything. Probes
+# still go out from the host's address and resolve through the host's
+# resolv.conf (the fleet DNS), so no Network=host needed.
+PublishPort=127.0.0.1:9115:9115
+Volume=/srv/containers/container-files/blackbox-exporter/data/blackbox.yml:/etc/blackbox/blackbox.yml:ro,z
+# The fleet's Caddy root CA, so HTTPS probes verify each service's cert
+# for real rather than skipping verification.
+Volume=/srv/containers/container-files/caddy/data/root-ca.crt:/etc/blackbox/root-ca.crt:ro,z
+Exec=--config.file=/etc/blackbox/blackbox.yml
+HealthCmd=wget -q --spider http://127.0.0.1:9115/-/healthy
+HealthInterval=30s
+HealthTimeout=5s
+HealthStartPeriod=10s
+HealthRetries=3
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

@@ -3,7 +3,7 @@
 # pattern) -- this role does several unrelated, not-everyday things, and
 # none should fire just because a play happens to include this role.
 # Pass the matching --tags explicitly (or, for
-# snapshot/repo_hygiene/snippet_permissions, include_role with
+# snapshot/repo_hygiene/snippet_permissions/ksm, include_role with
 # tasks_from -- see plays/system/update.yml's pre_tasks).
 - import_tasks: build_templates.yml
   tags: [never, templates]
@@ -22,3 +22,6 @@
 
 - import_tasks: snippet_permissions.yml
   tags: [never, snippet_permissions]
+
+- import_tasks: ksm.yml
+  tags: [never, ksm]

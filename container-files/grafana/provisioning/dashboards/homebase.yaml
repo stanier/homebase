@@ -1,0 +1,18 @@
+apiVersion: 1
+
+# Loads every dashboard JSON in grafana/dashboards/ (bind-mounted at
+# /etc/grafana/dashboards, see grafana.container) into a "Homebase"
+# folder. The JSON in git is the source of truth: allowUiUpdates is off,
+# so tweak a dashboard in the UI, then export it (Share -> Export ->
+# "Export for sharing externally" off) over the file here and commit.
+# Grafana re-reads the directory every updateIntervalSeconds, so a
+# redeploy doesn't strictly need a restart to pick changes up.
+providers:
+  - name: homebase
+    folder: Homebase
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 60
+    options:
+      path: /etc/grafana/dashboards

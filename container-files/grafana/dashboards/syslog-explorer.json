@@ -1,0 +1,354 @@
+{
+  "uid": "homebase-syslog",
+  "title": "Syslog explorer",
+  "description": "Everything the fleet ships to the central rsyslog receiver, filterable by host, program and regex.",
+  "tags": [
+    "homebase",
+    "loki",
+    "syslog"
+  ],
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "templating": {
+    "list": [
+      {
+        "name": "ds_logs",
+        "label": "Logs",
+        "type": "datasource",
+        "query": "loki",
+        "current": {
+          "text": "Loki",
+          "value": "Loki"
+        },
+        "hide": 0,
+        "refresh": 1,
+        "regex": "",
+        "options": []
+      },
+      {
+        "name": "hostname",
+        "label": "Host",
+        "type": "query",
+        "datasource": {
+          "type": "loki",
+          "uid": "${ds_logs}"
+        },
+        "query": {
+          "refId": "LokiVariableQueryEditor-VariableQuery",
+          "type": 1,
+          "label": "hostname",
+          "stream": "{job=\"syslog\"}"
+        },
+        "definition": "label_values({job=\"syslog\"}, hostname)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "hide": 0,
+        "options": [],
+        "regex": ""
+      },
+      {
+        "name": "program",
+        "label": "Program",
+        "type": "query",
+        "datasource": {
+          "type": "loki",
+          "uid": "${ds_logs}"
+        },
+        "query": {
+          "refId": "LokiVariableQueryEditor-VariableQuery",
+          "type": 1,
+          "label": "program",
+          "stream": "{job=\"syslog\", hostname=~\"$hostname\"}"
+        },
+        "definition": "label_values({job=\"syslog\", hostname=~\"$hostname\"}, program)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "hide": 0,
+        "options": [],
+        "regex": ""
+      },
+      {
+        "name": "search",
+        "label": "Search (regex)",
+        "type": "textbox",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "hide": 0,
+        "options": []
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": [
+    {
+      "title": "Homebase",
+      "type": "dashboards",
+      "tags": [
+        "homebase"
+      ],
+      "asDropdown": true,
+      "includeVars": false,
+      "keepTime": true
+    }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Log volume by host",
+      "datasource": {
+        "type": "loki",
+        "uid": "${ds_logs}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${ds_logs}"
+          },
+          "expr": "sum by (hostname) (count_over_time({job=\"syslog\", hostname=~\"$hostname\", program=~\"$program\"} |~ \"(?i)$search\" [$__auto]))",
+          "refId": "A",
+          "legendFormat": "{{hostname}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 60,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "bars",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Top programs",
+      "datasource": {
+        "type": "loki",
+        "uid": "${ds_logs}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${ds_logs}"
+          },
+          "expr": "topk(10, sum by (program) (count_over_time({job=\"syslog\", hostname=~\"$hostname\", program=~\"$program\"} |~ \"(?i)$search\" [$__auto])))",
+          "refId": "A",
+          "legendFormat": "{{program}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 60,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "bars",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Error-looking lines by host",
+      "datasource": {
+        "type": "loki",
+        "uid": "${ds_logs}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 24,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${ds_logs}"
+          },
+          "expr": "sum by (hostname) (count_over_time({job=\"syslog\", hostname=~\"$hostname\", program=~\"$program\"} |~ \"(?i)$search\" |~ \"(?i)(error|fail|denied|critical|panic|segfault)\" [$__auto]))",
+          "refId": "A",
+          "legendFormat": "{{hostname}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 60,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "bars",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "Lines matching error|fail|denied|critical|panic|segfault. A crude filter, but a new host or program showing up here is worth a look."
+    },
+    {
+      "id": 4,
+      "type": "logs",
+      "title": "Logs",
+      "datasource": {
+        "type": "loki",
+        "uid": "${ds_logs}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 24,
+        "h": 18
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${ds_logs}"
+          },
+          "expr": "{job=\"syslog\", hostname=~\"$hostname\", program=~\"$program\"} |~ \"(?i)$search\"",
+          "refId": "A",
+          "legendFormat": "__auto",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false
+      }
+    }
+  ]
+}

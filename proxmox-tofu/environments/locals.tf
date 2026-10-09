@@ -3,20 +3,14 @@ locals {
   # ANSIBLE_INVENTORY_ENV (set by scripts/tofu-with-vault-secrets.sh /
   # scripts/import.sh from this same workspace name) must always match
   # whichever workspace is currently selected.
-  pool            = terraform.workspace
-  storage         = "local"
-  snippet_storage = "local"
-  network_prefix  = 24
+  pool = terraform.workspace
 
-  # Real bridge names/gateway/MAC prefix for turkey/homelab -- pulled
-  # from inventory (group_vars/proxmox/main.yml, group_vars/vm.yml) via
-  # scripts/network-config.py rather than duplicated as literals here,
-  # same reasoning as local.nodes/local.vms below.
+  # Management NIC MAC prefix/guest interface name -- pulled from
+  # inventory (group_vars/vm.yml) via scripts/network-config.py rather
+  # than duplicated as literals here, same reasoning as
+  # local.nodes/local.vms below. Bridges/gateway are per node, in
+  # local.nodes.
   network_config = jsondecode(data.external.network_config.result.json)
-
-  app_bridge  = local.network_config.app_bridge
-  app_gateway = local.network_config.app_gateway
-  mgmt_bridge = local.network_config.mgmt_bridge
 
   management_mac_prefix = local.network_config.management_mac_prefix
   management_interface  = local.network_config.management_interface
@@ -55,13 +49,6 @@ locals {
   }
 
   enabled_vms = { for name, vm in local.vms : name => vm if try(vm.enabled, true) }
-
-  # vms.tf only ever defines vm_node1/vm_node2 -- a host whose node_alias
-  # (from scripts/vm-hostvars.py, derived from hosts.ini's [proxmox] group
-  # order) doesn't match either would silently match neither module's
-  # for_each and end up unmanaged with no error. vms.tf's
-  # check_known_node_aliases precondition fails the plan instead.
-  unmodeled_vms = [for name, vm in local.enabled_vms : name if !contains(["node1", "node2"], vm.node_alias)]
 
   vm_config = { for name, vm in local.enabled_vms : name => merge(vm, {
     template_vmid  = local.templates[vm.template]

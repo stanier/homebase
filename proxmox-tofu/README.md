@@ -10,7 +10,7 @@ still exists only as a fallback — see "Once this was trusted" below.
 
 **Out of scope, deliberately, for now:**
 - Building the golden templates themselves
-  (`plays/build_proxmox_templates.yml`) — still Ansible. This repo only
+  (`plays/vm/build_templates_pve.yml`) — still Ansible. This repo only
   ever clones an existing template vmid.
 - Everything after boot — onboarding, config management, snapshots,
   updates. Still Ansible, unchanged. See
@@ -85,10 +85,10 @@ scripts/tofu-with-vault-secrets.sh testzone apply
 ```
 
 It prompts once for the vault password (same prompt as
-`ansible-playbooks/testrun.sh`), exports one `TF_VAR_<alias>_api_token_secret`
-per Proxmox node (`node1`, `node2`, ... in that environment's `hosts.ini`
-`[proxmox]` group order — `turkey`/`homelab` today, matching
-`providers.tf`'s aliases) for that one process, and never writes the
+`ansible-playbooks/testrun.sh`), exports that environment's `hosts.ini`
+`[proxmox]` node names (`TF_VAR_proxmox_nodes`, the keys of
+`providers.tf`'s for_each'd provider) and their API token secrets
+(`TF_VAR_proxmox_api_token_secrets`) for that one process, and never writes the
 password or the tokens to disk. Assumes `ansible-playbooks` is a sibling
 checkout; set `ANSIBLE_PLAYBOOKS_DIR` if yours lives elsewhere.
 
@@ -153,11 +153,8 @@ no separate Tofu-side list to keep in sync:
 
 ```
 scripts/tofu-with-vault-secrets.sh <env> destroy \
-  -target='module.vm_node1["<name>"].proxmox_virtual_environment_vm.this'
+  -target='module.vm["<name>"].proxmox_virtual_environment_vm.this'
 ```
-
-(`vm_node1`/`vm_node2` match the host's `node_alias` -- see
-`scripts/vm-hostvars.py` -- use whichever one it's actually on.)
 
 Then remove its `hosts.ini` line / `host_vars/` file in
 `ansible-playbooks`, same as `legacy_delete_vm.yml`'s existing "remember

@@ -22,11 +22,8 @@ in sync:
 
 ```
 scripts/tofu-with-vault-secrets.sh <env> destroy \
-  -target='module.vm_node1["<name>"].proxmox_virtual_environment_vm.this'
+  -target='module.vm["<name>"].proxmox_virtual_environment_vm.this'
 ```
-
-(`vm_node1`/`vm_node2` match the host's `node_alias` — see
-`scripts/vm-hostvars.py` — use whichever one it's actually on.)
 
 Then remove its `hosts.ini` line / `host_vars/` file in
 `ansible-playbooks`.

@@ -26,7 +26,7 @@
     mode: "0644"
     content: |
       # Managed by ansible-playbooks (roles/node_exporter).
-      ARGS='{{ node_exporter_extra_args }}'
+      ARGS='{{ ((["--collector.systemd"] if node_exporter_systemd_collector | bool else []) + [node_exporter_extra_args]) | select | join(" ") }}'
   when: node_exporter_enabled
   notify: restart node_exporter
 
@@ -36,3 +36,22 @@
     state: started
     enabled: true
   when: node_exporter_enabled
+
+- name: Allow metrics1 to scrape node_exporter through firewalld
+  # vmagent scrapes each host's ansible_host, i.e. its management IP, so
+  # the connection arrives on the management interface -- which
+  # roles/management_network moves into its own zone (default
+  # "internal") on firewalled hosts. roles/firewall's firewall_rules
+  # only ever land in firewall_zone ("public"), so a rule there would
+  # never match this traffic; firewalld's default reject is what shows
+  # up in vmagent as "no route to host". Open the port in whichever zone
+  # the scrape actually arrives in, scoped to the scraper alone.
+  ansible.posix.firewalld:
+    rich_rule: "rule family=ipv4 source address={{ node_exporter_scrape_from }} port port={{ node_exporter_port }} protocol=tcp accept"
+    zone: "{{ (management_firewalld_zone | default('internal')) if (management_network_enabled | default(false)) else (firewall_zone | default('public')) }}"
+    permanent: true
+    immediate: true
+    state: "{{ 'enabled' if node_exporter_enabled else 'disabled' }}"
+  when:
+    - firewall_enabled | default(false)
+    - node_exporter_scrape_from | length > 0

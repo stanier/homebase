@@ -60,6 +60,12 @@ variable "memory" {
   default = 2048
 }
 
+variable "memory_min" {
+  description = "Balloon floor in MiB (Proxmox's \"Minimum memory\", proxmox_vm.memory_min) -- the host may reclaim down to this when it's above ~80% RAM. Null or equal to memory keeps the balloon device for stats but never shrinks the guest."
+  type        = number
+  default     = null
+}
+
 variable "cpu_type" {
   description = "Emulated CPU type -- \"host\" by default, same reasoning as proxmox_vm_cpu in the Ansible role: the Proxmox nodes here aren't clustered, so there's no cross-node migration compatibility to give up."
   type        = string
@@ -81,12 +87,23 @@ variable "app_ip" {
 
   validation {
     condition     = can(regex("^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(\\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}$", var.app_ip))
-    error_message = "app_ip must be a bare IPv4 address (e.g. 192.168.1.10) -- network_prefix is supplied separately, no /CIDR suffix here."
+    error_message = "app_ip must be a bare IPv4 address (e.g. 192.168.1.10) -- app_network_prefix is supplied separately, no /CIDR suffix here."
   }
 }
 
 variable "app_gateway" {
   type = string
+
+  validation {
+    condition     = can(regex("^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(\\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}$", var.app_gateway))
+    error_message = "app_gateway must be a bare IPv4 address -- check proxmox_app_gateway for this VM's node in inventory (group_vars/proxmox/ or host_vars/<node>.yml)."
+  }
+}
+
+variable "management_network" {
+  description = "Whether the VM gets net1 on mgmt_bridge (management_network_enabled). False skips the NIC, its ip_config and the mgmt-NIC rename snippet; mgmt_bridge/management_ip are then ignored."
+  type        = bool
+  default     = true
 }
 
 variable "mgmt_bridge" {
@@ -99,13 +116,30 @@ variable "management_ip" {
 
   validation {
     condition     = can(regex("^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(\\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}$", var.management_ip))
-    error_message = "management_ip must be a bare IPv4 address (e.g. 192.168.42.10) -- network_prefix is supplied separately, no /CIDR suffix here."
+    error_message = "management_ip must be a bare IPv4 address (e.g. 192.168.42.10) -- management_network_prefix is supplied separately, no /CIDR suffix here."
   }
 }
 
-variable "network_prefix" {
-  type    = number
-  default = 24
+variable "app_network_prefix" {
+  description = "CIDR prefix length for app_ip on net0, e.g. 24 for a 255.255.255.0 mask."
+  type        = number
+  default     = 24
+
+  validation {
+    condition     = var.app_network_prefix >= 1 && var.app_network_prefix <= 32 && floor(var.app_network_prefix) == var.app_network_prefix
+    error_message = "app_network_prefix must be a whole number from 1 to 32 (the /N of a CIDR, not a dotted netmask)."
+  }
+}
+
+variable "management_network_prefix" {
+  description = "CIDR prefix length for management_ip on net1, e.g. 21 for a 255.255.248.0 mask."
+  type        = number
+  default     = 24
+
+  validation {
+    condition     = var.management_network_prefix >= 1 && var.management_network_prefix <= 32 && floor(var.management_network_prefix) == var.management_network_prefix
+    error_message = "management_network_prefix must be a whole number from 1 to 32 (the /N of a CIDR, not a dotted netmask)."
+  }
 }
 
 variable "management_mac" {
@@ -154,19 +188,6 @@ variable "ssh_public_key" {
 
 variable "started" {
   description = "Power state -- true keeps this VM running (state: started in create_vm.yml)."
-  type        = bool
-  default     = true
-}
-
-variable "protected" {
-  description = <<-EOT
-    Sets prevent_destroy on this VM (main.tf's lifecycle block). Defaults
-    to true -- a bare `tofu destroy` (no -target) refuses to touch this
-    VM unless the caller explicitly opts it out. Set false only for VMs
-    that are genuinely meant to be routinely destroyed/recreated (e.g.
-    testzone's testrun.sh cycle) -- an environment's locals.tf, not a
-    per-host default, is the right place to make that call.
-  EOT
   type        = bool
   default     = true
 }

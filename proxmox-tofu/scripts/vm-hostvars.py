@@ -9,16 +9,13 @@ up to run this by hand today, see plays/provision_vms.yml's own comment
 for how a Tofu-driven Ansible run passes the real one through) instead of
 it being duplicated as Tofu literals: ansible_host/management_ip/app_ip/
 proxmox_vmid from hosts.ini's [vm] lines, the proxmox_vm block (node/
-template/cores/memory/disk_resize) and proxmox_enabled/proxmox_protected
-from group_vars/vm.yml, overridden per-host by host_vars/<name>.yml.
+template/cores/memory/memory_min/disk_resize), proxmox_enabled/proxmox_protected
+and app_network_prefix/management_network_prefix from group_vars/vm.yml,
+overridden per-host by host_vars/<name>.yml.
 
-Also assigns each host a `node_alias` ("node1", "node2", ...) based on
-the order its real Proxmox node name appears in hosts.ini's [proxmox]
-group -- providers.tf's provider aliases are the same generic names
-(see scripts/proxmox-nodes.py), so vms.tf can select a VM's provider/
-module without either file ever naming an actual node. The real name
-(`node`) is still passed through for the module's own node_name/SSH-node
-use, which does have to match Proxmox reality.
+A host whose proxmox_vm.node isn't in hosts.ini's [proxmox] group is a
+hard error here -- vms.tf picks each VM's provider by that node name, so
+there'd be no provider for it.
 
 Parses hosts.ini/group_vars/host_vars directly (plain YAML/text, no
 templating) rather than shelling out to `ansible-inventory --list` --
@@ -36,9 +33,10 @@ instead, so a var moving between files in that directory can't drop out
 silently the same way.
 
 stdin: the `external` data source's query object (ignored, no inputs
-needed here). stdout: {"json": "<hostname -> {node, node_alias,
-template, cores, memory, disk_resize, enabled, protected, vmid, app_ip,
-management_ip} as a JSON string>"} -- `external` only allows string
+needed here). stdout: {"json": "<hostname -> {node,
+template, cores, memory, memory_min, disk_resize, enabled, protected, vmid, app_ip,
+management_ip, management_network, app_network_prefix, management_network_prefix}
+as a JSON string>"} -- `external` only allows string
 values in its result, so the real payload is nested one level down and
 locals.tf jsondecode()s it back out.
 """
@@ -92,13 +90,24 @@ def load_yaml_vars(path: Path) -> dict:
     return {}
 
 
-def effective_hostvars(inventory_dir: Path, group: str, name: str, inline_vars: dict) -> dict:
+def effective_hostvars(
+    inventory_dir: Path, group: str, name: str, inline_vars: dict, extra_groups=()
+) -> dict:
     """Ansible's real precedence for the vars these scripts touch:
-    group_vars/<group> < hosts.ini inline vars < host_vars/<host>.
+    group_vars/<group> < group_vars/<each extra group, alphabetical> <
+    hosts.ini inline vars < host_vars/<host>. extra_groups is every other
+    group the host is listed under (hosts.ini + groups.ini) -- e.g.
+    groups.ini's [vm_turkey], whose group_vars/vm_turkey.yml is what
+    overrides group_vars/vm.yml's proxmox_vm.node: homelab default.
+    Skipping those used to put every VM on homelab here while
+    provision_vms.yml (real Ansible precedence) targeted turkey's VMs as
+    vm_node1[...] -- addresses Tofu then silently matched nothing for.
     group_vars/all is deliberately never consulted -- see this script's
     own docstring."""
     merged = {}
     merged.update(load_yaml_vars(inventory_dir / "group_vars" / group))
+    for extra in sorted(set(extra_groups) - {group}):
+        merged.update(load_yaml_vars(inventory_dir / "group_vars" / extra))
     merged.update(inline_vars)
     merged.update(load_yaml_vars(inventory_dir / "host_vars" / name))
     return merged
@@ -124,25 +133,56 @@ def main():
         sys.exit(1)
 
     groups = parse_hosts_ini(hosts_ini)
+    # groups.ini holds the per-node [vm_<node>] groups (and app groups);
+    # only consulted for membership, so it can't add hosts to [vm].
+    groups_ini = inventory_dir / "groups.ini"
+    membership = dict(groups)
+    if groups_ini.is_file():
+        for group, members in parse_hosts_ini(groups_ini).items():
+            membership[group] = membership.get(group, []) + members
     proxmox_hosts = [name for name, _ in groups.get("proxmox", [])]
-    node_aliases = {name: f"node{i + 1}" for i, name in enumerate(proxmox_hosts)}
 
     result = {}
     for name, inline_vars in groups.get("vm", []):
-        hv = effective_hostvars(inventory_dir, "vm", name, inline_vars)
+        host_groups = [g for g, members in membership.items() if any(m == name for m, _ in members)]
+        hv = effective_hostvars(inventory_dir, "vm", name, inline_vars, host_groups)
         vm = hv.get("proxmox_vm", {})
+        memory = vm.get("memory", 2048)
+
+        if vm["node"] not in proxmox_hosts:
+            print(
+                f"{name}'s proxmox_vm.node is {vm['node']!r}, which isn't in "
+                f"inventory/{inventory_env}/hosts.ini's [proxmox] group "
+                f"({', '.join(proxmox_hosts)}). Typo, or add the node to [proxmox].",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
         host = {
             "node": vm["node"],
-            "node_alias": node_aliases[vm["node"]],
             "template": vm["template"],
             "cores": vm.get("cores", 2),
-            "memory": vm.get("memory", 2048),
+            "memory": memory,
+            # Balloon floor -- 0.5 mirrors roles/hypervisor's
+            # proxmox_vm_balloon_ratio default, which this script can't
+            # see (role defaults aren't inventory).
+            "memory_min": vm.get(
+                "memory_min",
+                int(memory * hv.get("proxmox_vm_balloon_ratio", 0.5)),
+            ),
             "enabled": hv.get("proxmox_enabled", True),
             "protected": hv.get("proxmox_protected", True),
             "vmid": int(hv["proxmox_vmid"]),
             "app_ip": hv["app_ip"],
             "management_ip": hv["management_ip"],
+            # Same flag roles/management_network gates on. False drops
+            # net1 and its cloud-init config entirely (e.g. a node with
+            # no management VLAN).
+            "management_network": hv.get("management_network_enabled", True),
+            # CIDR prefix lengths for net0/net1 -- group_vars/vm.yml,
+            # overridable per host. 24 matches the old hardcoded value.
+            "app_network_prefix": int(hv.get("app_network_prefix", 24)),
+            "management_network_prefix": int(hv.get("management_network_prefix", 24)),
         }
         if vm.get("disk_resize") is not None:
             host["disk_resize"] = vm["disk_resize"]

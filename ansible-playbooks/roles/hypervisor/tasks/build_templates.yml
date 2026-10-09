@@ -1,8 +1,11 @@
 ---
 # Builds/refreshes every entry in proxmox_templates on this Proxmox node.
-# Run via plays/vm/build_proxmox_templates.yml --tags templates -- rare, only
-# when a new OS is added to proxmox_templates or an existing template
-# needs rebuilding from scratch.
+# Run via plays/vm/build_templates_pve.yml --tags templates -- when a new
+# OS is added to proxmox_templates, or with -e proxmox_template_rebuild=true
+# to rebuild every existing template from a fresh upstream image (worth
+# doing every week or two: build_template.yml bakes a full package
+# upgrade in, and the older the template, the longer every fresh
+# clone's first update_packages run takes).
 #
 # The existence check below looks at the "template" flag, not just
 # whether the vmid is present -- every task in build_template.yml is
@@ -11,8 +14,10 @@
 # that exists but was never finished (e.g. a prior run died partway
 # through disk import) gets its remaining steps re-run and repaired here
 # rather than being mistaken for a completed template and skipped
-# forever. To force a full from-scratch rebuild of an already-completed
-# template, delete its VM in the Proxmox UI first.
+# forever. proxmox_template_rebuild=true deletes each completed template
+# on this node first (below) so it's rebuilt from scratch -- safe for
+# existing VMs, since modules/proxmox_vm and legacy_create_vm.yml both
+# make full clones, not linked ones.
 #
 # Every proxmox_kvm/proxmox_disk/proxmox_vm_info task (here and in
 # build_template.yml) is delegated to localhost -- those just make HTTP
@@ -57,13 +62,50 @@
 # A block can't be looped directly (Ansible has no "loop a block"
 # support), so each missing/incomplete template's build steps live in
 # their own task file instead, included once per template that needs it.
-- name: Build missing or incomplete templates
+# Only ever a completed template on this node -- never a non-template
+# VM that happens to hold the vmid (that's left to the build step's own
+# repair logic, as before) and never another node's.
+- name: Delete each completed template for a from-scratch rebuild
+  community.proxmox.proxmox_kvm:
+    node: "{{ inventory_hostname }}"
+    vmid: "{{ item.item.value.vmid }}"
+    state: absent
+  module_defaults:
+    group/community.proxmox.proxmox:
+      api_host: "{{ ansible_host }}"
+      api_user: "{{ proxmox_api_user }}"
+      api_token_id: "{{ proxmox_api_token_id }}"
+      api_token_secret: "{{ proxmox_api_token_secret }}"
+      validate_certs: "{{ proxmox_api_validate_certs }}"
+      api_timeout: "{{ proxmox_api_timeout }}"
+  delegate_to: localhost
+  become: false
+  vars:
+    ansible_python_interpreter: >-
+      {{ (lookup('env', 'VIRTUAL_ENV') ~ '/bin/python3')
+         if lookup('env', 'VIRTUAL_ENV')
+         else ansible_playbook_python }}
+  when:
+    - proxmox_template_rebuild | bool
+    - item.proxmox_vms | length > 0
+    - item.proxmox_vms[0].template
+    - item.proxmox_vms[0].node == inventory_hostname
+  loop: "{{ proxmox_template_check.results }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  register: proxmox_template_deleted
+
+- name: Build missing, incomplete, or just-deleted templates
   include_tasks: build_template.yml
   vars:
     tmpl_key: "{{ item.item.key }}"
     tmpl: "{{ item.item.value }}"
-  when: item.proxmox_vms | length == 0 or not item.proxmox_vms[0].template
+  when: >-
+    item.proxmox_vms | length == 0
+    or not item.proxmox_vms[0].template
+    or proxmox_template_deleted.results[ansible_loop.index0] is changed
   loop: "{{ proxmox_template_check.results }}"
   loop_control:
     label: "{{ item.item.key }}"
     loop_var: item
+    extended: true

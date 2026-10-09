@@ -9,9 +9,8 @@ set -euo pipefail
 # vmid. Safe to re-run -- `tofu import` on an address already in state
 # just fails with "Resource already managed", it won't touch the live VM.
 #
-# Which module (vm_node1/vm_node2/...) and real node each host imports
-# against comes from scripts/vm-hostvars.py itself, not a fixed
-# assumption here -- works the same however many hosts live on each
+# Which node each host imports against comes from scripts/vm-hostvars.py
+# itself, not a fixed assumption here -- works the same however many hosts live on each
 # node, or if that ever changes.
 #
 # Loads the vault secrets itself (one password prompt for every import in
@@ -53,8 +52,7 @@ if [[ ! -f "$VAULT_FILE" ]]; then
   exit 1
 fi
 
-# node1/node2/... in [proxmox]'s file order, same convention as
-# scripts/proxmox-nodes.py and scripts/vm-hostvars.py's node_alias.
+# Real node names from [proxmox] -- providers.tf's for_each keys.
 mapfile -t PROXMOX_NODES < <(awk '/^\[proxmox\]/{f=1;next} /^\[/{f=0} f && NF {print $1}' "$HOSTS_INI")
 
 ANSIBLE_VAULT_BIN="$ANSIBLE_PLAYBOOKS_DIR/venv/bin/ansible-vault"
@@ -67,29 +65,23 @@ trap 'unset VAULT_PASS' EXIT
 
 DECRYPTED="$("$ANSIBLE_VAULT_BIN" view --vault-password-file="$VAULT_PASS_SCRIPT" "$VAULT_FILE")"
 
-extract_secret() {
-  # A sed capture like [^"']* would silently truncate any secret that
-  # happens to contain a quote character -- parse the YAML properly
-  # instead so that can't happen.
-  python3 -c '
-import sys, yaml
-value = yaml.safe_load(sys.stdin).get(sys.argv[1])
-if value is not None:
-    print(value)
-' "$1" <<<"$DECRYPTED"
-}
-
-for i in "${!PROXMOX_NODES[@]}"; do
-  node_name="${PROXMOX_NODES[$i]}"
-  alias="node$((i + 1))"
-  vault_key="vault_${node_name}_proxmox_api_token_secret"
-  secret="$(extract_secret "$vault_key")"
-  if [[ -z "$secret" ]]; then
-    echo "$vault_key not found in $VAULT_FILE" >&2
-    exit 1
-  fi
-  export "TF_VAR_${alias}_api_token_secret=$secret"
-done
+# {node name: token secret} as JSON for var.proxmox_api_token_secrets,
+# from each node's vault_<node>_proxmox_api_token_secret. Parsed with
+# real YAML so a secret containing a quote character can't get silently
+# truncated the way a sed capture would.
+TF_VAR_proxmox_api_token_secrets="$(python3 -c '
+import json, sys, yaml
+vault = yaml.safe_load(sys.stdin)
+secrets = {}
+for node in sys.argv[2:]:
+    value = vault.get(f"vault_{node}_proxmox_api_token_secret")
+    if value is None:
+        sys.exit(f"vault_{node}_proxmox_api_token_secret not found in {sys.argv[1]}")
+    secrets[node] = str(value)
+print(json.dumps(secrets))
+' "$VAULT_FILE" "${PROXMOX_NODES[@]}" <<<"$DECRYPTED")"
+TF_VAR_proxmox_nodes="$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1:]))' "${PROXMOX_NODES[@]}")"
+export TF_VAR_proxmox_api_token_secrets TF_VAR_proxmox_nodes
 
 cd "$ENV_DIR"
 tofu workspace select "$ENVIRONMENT"
@@ -109,7 +101,7 @@ already_imported() {
   grep -Fxq "$1" <<<"$EXISTING"
 }
 
-# name node_real node_alias vmid, sourced from vm-hostvars.py so this
+# name node vmid, sourced from vm-hostvars.py so this
 # never has to know which node a host is on, or how many hosts there
 # are, by itself. ANSIBLE_INVENTORY_ENV picks which inventory/<env>
 # vm-hostvars.py reads -- without it, it'd default to testzone's
@@ -120,7 +112,7 @@ mapfile -t HOSTS < <(VM_HOSTVARS="$VM_HOSTVARS" python3 <<'PYEOF'
 import json, os
 data = json.loads(json.loads(os.environ["VM_HOSTVARS"])["json"])
 for name, vm in data.items():
-    print(f"{name} {vm['node']} {vm['node_alias']} {vm['vmid']}")
+    print(f"{name} {vm['node']} {vm['vmid']}")
 PYEOF
 )
 
@@ -128,10 +120,10 @@ NOT_DEPLOYED=()
 NO_SNIPPET=()
 
 for entry in "${HOSTS[@]}"; do
-  read -r name node_real node_alias vmid <<<"$entry"
+  read -r name node_real vmid <<<"$entry"
 
-  vm_addr="module.vm_${node_alias}[\"$name\"].proxmox_virtual_environment_vm.this"
-  snippet_addr="module.vm_${node_alias}[\"$name\"].proxmox_virtual_environment_file.mgmt_rename[0]"
+  vm_addr="module.vm[\"$name\"].proxmox_virtual_environment_vm.this"
+  snippet_addr="module.vm[\"$name\"].proxmox_virtual_environment_file.mgmt_rename[0]"
 
   echo "=== $name (vmid $vmid, $node_real) ===" >&2
 

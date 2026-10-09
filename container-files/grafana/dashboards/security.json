@@ -1,0 +1,1235 @@
+{
+  "uid": "homebase-security",
+  "title": "Security",
+  "description": "SSH logins and failures, sudo use, Keycloak logins and auth logs from across the fleet. A quick look, not a replacement for Wazuh.",
+  "tags": [
+    "homebase",
+    "loki",
+    "security",
+    "keycloak"
+  ],
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "templating": {
+    "list": [
+      {
+        "name": "ds_logs",
+        "label": "Logs",
+        "type": "datasource",
+        "query": "loki",
+        "current": {
+          "text": "Loki",
+          "value": "Loki"
+        },
+        "hide": 0,
+        "refresh": 1,
+        "regex": "",
+        "options": []
+      },
+      {
+        "name": "ds_metrics",
+        "label": "Metrics",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {
+          "text": "VictoriaMetrics",
+          "value": "VictoriaMetrics"
+        },
+        "hide": 0,
+        "refresh": 1,
+        "regex": "",
+        "options": []
+      },
+      {
+        "name": "hostname",
+        "label": "Host",
+        "type": "query",
+        "datasource": {
+          "type": "loki",
+          "uid": "${ds_logs}"
+        },
+        "query": {
+          "refId": "LokiVariableQueryEditor-VariableQuery",
+          "type": 1,
+          "label": "hostname",
+          "stream": "{job=\"syslog\"}"
+        },
+        "definition": "label_values({job=\"syslog\"}, hostname)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "hide": 0,
+        "options": [],
+        "regex": ""
+      },
+      {
+        "name": "search",
+        "label": "Auth log search (regex)",
+        "type": "textbox",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "hide": 0,
+        "options": []
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": [
+    {
+      "title": "Homebase",
+      "type": "dashboards",
+      "tags": [
+        "homebase"
+      ],
+      "asDropdown": true,
+      "includeVars": false,
+      "keepTime": true
+    }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Summary (selected time range)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "SSH auth failures",
+      "datasource": {
+        "type": "loki",
+        "uid": "${ds_logs}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${ds_logs}"
+          },
+          "expr": "sum(count_over_time({job=\"syslog\", hostname=~\"$hostname\", program=~\"sshd|sshd-session\"} |~ \"Failed (password|publickey|keyboard-interactive)|Invalid user\" [$__range]))",
+          "refId": "A",
+          "legendFormat": "__auto",
+          "queryType": "instant"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 1,
+                "color": "orange"
+              }
+            ]
+          },
+          "noValue": "0",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center"
+      },
+      "description": "Failed password/publickey attempts plus invalid-user lines. One attempt at a nonexistent user can log both."
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Sources with failures",
+      "datasource": {
+        "type": "loki",
+        "uid": "${ds_logs}"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${ds_logs}"
+          },
+          "expr": "count(sum by (src) (count_over_time({job=\"syslog\", hostname=~\"$hostname\", program=~\"sshd|sshd-session\"} |~ \"Failed (password|publickey|keyboard-interactive)|Invalid user\" | regexp `from (?P<src>[0-9a-fA-F.:]+) port` [$__range])))",
+          "refId": "A",
+          "legendFormat": "__auto",
+          "queryType": "instant"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 1,
+                "color": "orange"
+              }
+            ]
+          },
+          "noValue": "0",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "SSH logins",
+      "datasource": {
+        "type": "loki",
+        "uid": "${ds_logs}"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${ds_logs}"
+          },
+          "expr": "sum(count_over_time({job=\"syslog\", hostname=~\"$hostname\", program=~\"sshd|sshd-session\"} |= \"Accepted \" [$__range]))",
+          "refId": "A",
+          "legendFormat": "__auto",
+          "queryType": "instant"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              }
+            ]
+          },
+          "noValue": "0",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "sudo failures",
+      "datasource": {
+        "type": "loki",
+        "uid": "${ds_logs}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${ds_logs}"
+          },
+          "expr": "sum(count_over_time({job=\"syslog\", hostname=~\"$hostname\", program=\"sudo\"} |~ \"incorrect password attempt|NOT in sudoers|authentication failure\" [$__range]))",
+          "refId": "A",
+          "legendFormat": "__auto",
+          "queryType": "instant"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 1,
+                "color": "orange"
+              }
+            ]
+          },
+          "noValue": "0",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "sudo by people",
+      "datasource": {
+        "type": "loki",
+        "uid": "${ds_logs}"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${ds_logs}"
+          },
+          "expr": "sum(count_over_time({job=\"syslog\", hostname=~\"$hostname\", program=\"sudo\"} |= \"COMMAND=\" !~ \"incorrect password attempt|NOT in sudoers\" != \"BECOME-SUCCESS\" [$__range]))",
+          "refId": "A",
+          "legendFormat": "__auto",
+          "queryType": "instant"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              }
+            ]
+          },
+          "noValue": "0",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center"
+      },
+      "description": "sudo commands, excluding Ansible's become runs."
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Ansible become runs",
+      "datasource": {
+        "type": "loki",
+        "uid": "${ds_logs}"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${ds_logs}"
+          },
+          "expr": "sum(count_over_time({job=\"syslog\", hostname=~\"$hostname\", program=\"sudo\"} |= \"BECOME-SUCCESS\" [$__range]))",
+          "refId": "A",
+          "legendFormat": "__auto",
+          "queryType": "instant"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              }
+            ]
+          },
+          "noValue": "0",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center"
+      },
+      "description": "One per task Ansible ran with become: a quick way to line changes up with a playbook run."
+    },
+    {
+      "id": 8,
+      "type": "row",
+      "title": "SSH",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "SSH auth failures by host",
+      "datasource": {
+        "type": "loki",
+        "uid": "${ds_logs}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${ds_logs}"
+          },
+          "expr": "sum by (hostname) (count_over_time({job=\"syslog\", hostname=~\"$hostname\", program=~\"sshd|sshd-session\"} |~ \"Failed (password|publickey|keyboard-interactive)|Invalid user\" [$__auto]))",
+          "refId": "A",
+          "legendFormat": "{{hostname}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 60,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "bars",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "SSH logins by host",
+      "datasource": {
+        "type": "loki",
+        "uid": "${ds_logs}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 6,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${ds_logs}"
+          },
+          "expr": "sum by (hostname) (count_over_time({job=\"syslog\", hostname=~\"$hostname\", program=~\"sshd|sshd-session\"} |= \"Accepted \" [$__auto]))",
+          "refId": "A",
+          "legendFormat": "{{hostname}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 60,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "bars",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "table",
+      "title": "Successful logins",
+      "datasource": {
+        "type": "loki",
+        "uid": "${ds_logs}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 12,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${ds_logs}"
+          },
+          "expr": "sum by (hostname, user, method, src) (count_over_time({job=\"syslog\", hostname=~\"$hostname\", program=~\"sshd|sshd-session\"} |= \"Accepted \" | regexp `Accepted (?P<method>\\S+) for (?P<user>\\S+) from (?P<src>\\S+)` [$__range]))",
+          "refId": "A",
+          "legendFormat": "__auto",
+          "queryType": "instant"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "Logins",
+            "desc": true
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "indexByName": {
+              "hostname": 0,
+              "user": 1,
+              "src": 2,
+              "method": 3,
+              "Value": 4,
+              "Value #A": 5
+            },
+            "renameByName": {
+              "hostname": "Host",
+              "user": "User",
+              "src": "From",
+              "method": "Method",
+              "Value": "Logins",
+              "Value #A": "Logins"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "table",
+      "title": "Top failing sources",
+      "datasource": {
+        "type": "loki",
+        "uid": "${ds_logs}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 14,
+        "w": 6,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${ds_logs}"
+          },
+          "expr": "topk(15, sum by (src) (count_over_time({job=\"syslog\", hostname=~\"$hostname\", program=~\"sshd|sshd-session\"} |~ \"Failed (password|publickey|keyboard-interactive)|Invalid user\" | regexp `from (?P<src>[0-9a-fA-F.:]+) port` [$__range])))",
+          "refId": "A",
+          "legendFormat": "__auto",
+          "queryType": "instant"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "Failures",
+            "desc": true
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "indexByName": {
+              "src": 0,
+              "Value": 1,
+              "Value #A": 2
+            },
+            "renameByName": {
+              "src": "Source",
+              "Value": "Failures",
+              "Value #A": "Failures"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "table",
+      "title": "Top invalid usernames",
+      "datasource": {
+        "type": "loki",
+        "uid": "${ds_logs}"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 14,
+        "w": 6,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${ds_logs}"
+          },
+          "expr": "topk(15, sum by (user) (count_over_time({job=\"syslog\", hostname=~\"$hostname\", program=~\"sshd|sshd-session\"} |= \"Invalid user\" | regexp `Invalid user (?P<user>\\S*) from (?P<src>\\S+)` [$__range])))",
+          "refId": "A",
+          "legendFormat": "__auto",
+          "queryType": "instant"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "Attempts",
+            "desc": true
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "indexByName": {
+              "user": 0,
+              "Value": 1,
+              "Value #A": 2
+            },
+            "renameByName": {
+              "user": "Username",
+              "Value": "Attempts",
+              "Value #A": "Attempts"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "row",
+      "title": "sudo",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 23,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 15,
+      "type": "table",
+      "title": "sudo by user",
+      "datasource": {
+        "type": "loki",
+        "uid": "${ds_logs}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 10,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${ds_logs}"
+          },
+          "expr": "sum by (hostname, user, runas) (count_over_time({job=\"syslog\", hostname=~\"$hostname\", program=\"sudo\"} |= \"COMMAND=\" !~ \"incorrect password attempt|NOT in sudoers\" | regexp `\\]: +(?P<user>[^ :]+) : .*USER=(?P<runas>\\S+) ;` [$__range]))",
+          "refId": "A",
+          "legendFormat": "__auto",
+          "queryType": "instant"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "Commands",
+            "desc": true
+          }
+        ]
+      },
+      "description": "Includes Ansible's become runs (usually the automation user).",
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "indexByName": {
+              "hostname": 0,
+              "user": 1,
+              "runas": 2,
+              "Value": 3,
+              "Value #A": 4
+            },
+            "renameByName": {
+              "hostname": "Host",
+              "user": "User",
+              "runas": "As",
+              "Value": "Commands",
+              "Value #A": "Commands"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "sudo failures by host",
+      "datasource": {
+        "type": "loki",
+        "uid": "${ds_logs}"
+      },
+      "gridPos": {
+        "x": 10,
+        "y": 24,
+        "w": 14,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${ds_logs}"
+          },
+          "expr": "sum by (hostname) (count_over_time({job=\"syslog\", hostname=~\"$hostname\", program=\"sudo\"} |~ \"incorrect password attempt|NOT in sudoers|authentication failure\" [$__auto]))",
+          "refId": "A",
+          "legendFormat": "{{hostname}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 60,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "bars",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "Wrong passwords, users not in sudoers, PAM authentication failures."
+    },
+    {
+      "id": 17,
+      "type": "logs",
+      "title": "sudo commands by people",
+      "datasource": {
+        "type": "loki",
+        "uid": "${ds_logs}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${ds_logs}"
+          },
+          "expr": "{job=\"syslog\", hostname=~\"$hostname\", program=\"sudo\"} |= \"COMMAND=\" !~ \"incorrect password attempt|NOT in sudoers\" != \"BECOME-SUCCESS\"",
+          "refId": "A",
+          "legendFormat": "__auto",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false
+      },
+      "description": "Ansible's become runs are filtered out."
+    },
+    {
+      "id": 18,
+      "type": "row",
+      "title": "Keycloak (SSO)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 19,
+      "type": "stat",
+      "title": "Failed logins",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds_metrics}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 41,
+        "w": 4,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds_metrics}"
+          },
+          "expr": "sum(increase(keycloak_user_events_total{job=\"keycloak\",event=\"login\",error!=\"\"}[$__range]))",
+          "refId": "A",
+          "legendFormat": "__auto",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 1,
+                "color": "orange"
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center"
+      },
+      "description": "Across all realms, in the selected time range."
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Keycloak logins by result",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds_metrics}"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 41,
+        "w": 20,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds_metrics}"
+          },
+          "expr": "label_replace(sum by (error) (increase(keycloak_user_events_total{job=\"keycloak\",event=\"login\"}[$__rate_interval])), \"error\", \"success\", \"error\", \"\")",
+          "refId": "A",
+          "legendFormat": "{{error}}",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 60,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false,
+            "drawStyle": "bars",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "success"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "From Keycloak's own event metrics. invalid_user_credentials is a wrong password; user_not_found a username that doesn't exist."
+    },
+    {
+      "id": 21,
+      "type": "row",
+      "title": "Auth log",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 22,
+      "type": "logs",
+      "title": "Authentication-related lines",
+      "datasource": {
+        "type": "loki",
+        "uid": "${ds_logs}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 49,
+        "w": 24,
+        "h": 14
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${ds_logs}"
+          },
+          "expr": "{job=\"syslog\", hostname=~\"$hostname\", program=~\"sshd|sshd-session|sudo|su|sssd.*|systemd-logind|polkitd\"} != \"BECOME-SUCCESS\" |~ \"(?i)$search\"",
+          "refId": "A",
+          "legendFormat": "__auto",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false
+      }
+    }
+  ]
+}

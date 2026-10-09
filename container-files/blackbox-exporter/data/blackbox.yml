@@ -1,0 +1,29 @@
+# Probe modules. vmagent picks a module and a target per probe (see the
+# blackbox-* jobs in host_vars/metrics1.yml's vmagent-config.yaml) --
+# this file only says *how* to probe, never *what*.
+#
+# Environment-agnostic default. host_vars/metrics1.yml overwrites this
+# file on deploy with the same modules plus dns_zone_soa, whose
+# query_name is the environment's own base_domain -- something only the
+# inventory knows. Keep the two in step.
+modules:
+  # HTTPS through Caddy. Most services bounce / to a login page, so
+  # follow redirects and judge the final response. Certs are verified
+  # against the fleet's own root CA (mounted by the quadlet);
+  # probe_ssl_earliest_cert_expiry is reported either way.
+  http_2xx:
+    prober: http
+    timeout: 10s
+    http:
+      preferred_ip_protocol: ip4
+      follow_redirects: true
+      fail_if_not_ssl: true
+      tls_config:
+        ca_file: /etc/blackbox/root-ca.crt
+
+  # Plain "is something listening" check, for ports with no HTTP on them.
+  tcp_connect:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      preferred_ip_protocol: ip4

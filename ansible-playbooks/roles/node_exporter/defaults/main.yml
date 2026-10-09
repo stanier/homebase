@@ -6,3 +6,17 @@
 # podman at all, not just the [containers] group.
 node_exporter_enabled: true
 node_exporter_extra_args: ""
+
+# systemd collector (off upstream by default): per-unit state as
+# node_systemd_unit_state, which Grafana's "Failed systemd units" panels
+# read -- catches crash-looping quadlet services and failing timers.
+# Its own toggle rather than a default in node_exporter_extra_args, so
+# overriding extra_args on a host doesn't silently drop it.
+node_exporter_systemd_collector: true
+
+# Source address allowed through firewalld to reach :9100 -- metrics1's
+# vmagent, which scrapes every host's ansible_host (its management IP).
+# Only applied on hosts with firewall_enabled; see tasks/main.yml for
+# why this can't just be a firewall_rules entry.
+node_exporter_port: 9100
+node_exporter_scrape_from: "{{ hostvars['metrics1'].ansible_host | default('') }}"

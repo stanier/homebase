@@ -1,5 +1,7 @@
 ---
 - block:
+  - import_tasks: dnf_tuning.yml
+  - import_tasks: trim_base_packages.yml
   - import_tasks: set_hostname.yml
   - import_tasks: set_root_password.yml
   - import_tasks: provision_automation_user.yml

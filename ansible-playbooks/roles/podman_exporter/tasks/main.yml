@@ -33,6 +33,20 @@
     XDG_RUNTIME_DIR: "{{ containers_xdg_runtime_dir }}"
   when: podman_exporter_enabled
 
+- name: Allow metrics1 to scrape podman_exporter through firewalld
+  # Same zone reasoning as roles/node_exporter's identical task: the
+  # scrape arrives on the management interface, which isn't in
+  # firewall_zone on firewalled hosts.
+  ansible.posix.firewalld:
+    rich_rule: "rule family=ipv4 source address={{ podman_exporter_scrape_from }} port port={{ podman_exporter_port }} protocol=tcp accept"
+    zone: "{{ (management_firewalld_zone | default('internal')) if (management_network_enabled | default(false)) else (firewall_zone | default('public')) }}"
+    permanent: true
+    immediate: true
+    state: "{{ 'enabled' if podman_exporter_enabled else 'disabled' }}"
+  when:
+    - firewall_enabled | default(false)
+    - podman_exporter_scrape_from | length > 0
+
 - name: Stop and disable podman_exporter for the containers user when opted out
   ansible.builtin.systemd:
     name: prometheus-podman-exporter

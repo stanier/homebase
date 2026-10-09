@@ -7,7 +7,7 @@ terraform {
 }
 
 locals {
-  mgmt_nic_pinned = var.management_mac != ""
+  mgmt_nic_pinned = var.management_network && var.management_mac != ""
 }
 
 resource "proxmox_virtual_environment_file" "mgmt_rename" {
@@ -36,7 +36,13 @@ resource "proxmox_virtual_environment_vm" "this" {
 
   clone {
     vm_id = var.template_vmid
-    full  = true
+
+    # Full clone, not linked. A linked clone's disk stays a delta against
+    # the template's, so deleting/rebuilding the template (see
+    # build_template.yml) would orphan or break every VM cloned from it.
+    # Full clones cost more storage up front but keep each VM's disk
+    # independent -- worth it for a golden-template workflow like this one.
+    full = true
   }
 
   cpu {
@@ -46,21 +52,38 @@ resource "proxmox_virtual_environment_vm" "this" {
 
   memory {
     dedicated = var.memory
+
+    # bpg's floating is Proxmox's balloon value. Leaving it at the
+    # provider's 0 would remove the balloon device outright, so even
+    # memory_min == memory is worth passing: the device stays for
+    # in-guest stats, it just never reclaims anything.
+    floating = coalesce(var.memory_min, var.memory)
   }
 
   disk {
     datastore_id = var.storage
     interface    = "scsi0"
     size         = var.disk_size != null ? trimsuffix(var.disk_size, "G") : null
+
+    # storage is a dir-backed datastore (qcow2 files), which does support
+    # discard -- it punches holes in the qcow2 file so guest-side fstrim
+    # actually reclaims host disk space instead of the file only ever
+    # growing. ssd presents the disk as non-rotational so guests that
+    # gate TRIM on that (Windows, some udev rules) still pass it through.
+    discard = "on"
+    ssd     = true
   }
 
   network_device {
     bridge = var.app_bridge
   }
 
-  network_device {
-    bridge      = var.mgmt_bridge
-    mac_address = local.mgmt_nic_pinned ? var.management_mac : null
+  dynamic "network_device" {
+    for_each = var.management_network ? [1] : []
+    content {
+      bridge      = var.mgmt_bridge
+      mac_address = local.mgmt_nic_pinned ? var.management_mac : null
+    }
   }
 
   vga {
@@ -81,14 +104,17 @@ resource "proxmox_virtual_environment_vm" "this" {
 
     ip_config {
       ipv4 {
-        address = "${var.app_ip}/${var.network_prefix}"
+        address = "${var.app_ip}/${var.app_network_prefix}"
         gateway = var.app_gateway
       }
     }
 
-    ip_config {
-      ipv4 {
-        address = "${var.management_ip}/${var.network_prefix}"
+    dynamic "ip_config" {
+      for_each = var.management_network ? [1] : []
+      content {
+        ipv4 {
+          address = "${var.management_ip}/${var.management_network_prefix}"
+        }
       }
     }
 
@@ -97,8 +123,13 @@ resource "proxmox_virtual_environment_vm" "this" {
       keys     = [var.ssh_public_key]
     }
 
-    dns {
-      servers = var.nameservers
+    # Only when there's something to set -- the provider doesn't store an
+    # empty dns block, so a static `servers = []` diffs on every plan.
+    dynamic "dns" {
+      for_each = length(var.nameservers) > 0 ? [1] : []
+      content {
+        servers = var.nameservers
+      }
     }
 
     vendor_data_file_id = local.mgmt_nic_pinned ? proxmox_virtual_environment_file.mgmt_rename[0].id : null
@@ -111,6 +142,6 @@ resource "proxmox_virtual_environment_vm" "this" {
       disk,
     ]
 
-    prevent_destroy = var.protected
+    #prevent_destroy = terraform.workspace != "testzone"
   }
 }

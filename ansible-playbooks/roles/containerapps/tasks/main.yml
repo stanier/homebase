@@ -283,13 +283,19 @@
   # (see "Ensure gitea data/config directories exist" above). Absolute
   # entries should usually set dir_mode to match whatever that other task
   # already set on the directory, since this task manages the same path.
+  #
+  # Absolute entries are created as root rather than containers_user: their
+  # parents (e.g. /srv) are root-owned, so containers_user can't mkdir the
+  # first missing segment (e.g. /srv/stoa) itself. The file module applies
+  # owner/mode to every intermediate dir it creates, so the result is still
+  # containers_user-owned and the copy below (as containers_user) can write.
   ansible.builtin.file:
     path: "{{ (item.dest | dirname) if item.dest.startswith('/') else (containerapps_dest + '/' + (item.dest | dirname)) }}"
     state: directory
     owner: "{{ containers_user }}"
     group: "{{ containers_user }}"
     mode: "{{ item.dir_mode | default('0700') }}"
-  become_user: "{{ containers_user }}"
+  become_user: "{{ 'root' if item.dest.startswith('/') else containers_user }}"
   loop: "{{ containerapps_secret_files | default([]) }}"
   loop_control:
     label: "{{ item.dest }}"

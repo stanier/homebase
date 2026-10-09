@@ -48,6 +48,17 @@
     state: present
   when: freeipa_client_enabled
 
+- name: Ensure the FreeIPA server's FQDN resolves locally too
+  # Pairs with ipa-client-install's --server/--fixed-primary below, so
+  # enrollment and SSSD's KDC/LDAP contacts don't depend on dnsguard
+  # answering every lookup.
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: "^{{ hostvars['freeipa'].app_ip | regex_escape }}\\s"
+    line: "{{ hostvars['freeipa'].app_ip }} freeipa.{{ base_domain }} freeipa"
+    state: present
+  when: freeipa_client_enabled
+
 - name: Check whether this host is already an IPA client (or server)
   ansible.builtin.stat:
     path: /etc/ipa/default.conf
@@ -184,6 +195,16 @@
           - --unattended
           - "--domain={{ base_domain }}"
           - "--realm={{ freeipa_realm }}"
+          # Pinned rather than SRV-discovered: with discovery,
+          # ipa-client-install writes krb5.conf with no kdc = lines
+          # and dns_lookup_kdc = true, so every KDC contact (including
+          # its own mid-install kinit) is another round of SRV lookups
+          # through dnsguard -- which failed as "Cannot contact any
+          # KDC" on gitea. --fixed-primary also keeps SSSD from
+          # rediscovering via DNS afterwards. Resolved via /etc/hosts
+          # (task above), not DNS.
+          - "--server=freeipa.{{ base_domain }}"
+          - --fixed-primary
           - --principal=admin
           - "--password={{ freeipa_admin_password }}"
           - --ca-cert-file=/etc/ipa-client-enrollment-ca.crt

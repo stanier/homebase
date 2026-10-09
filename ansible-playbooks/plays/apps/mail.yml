@@ -6,6 +6,9 @@
   # relay mail1's own mail through itself.
   hosts: all:!mail_server
   become: true
+  # Every task here is per-host only, so let each host run ahead rather
+  # than wait at every task for the slowest one (linear's default).
+  strategy: free
 
   roles:
     - postfix

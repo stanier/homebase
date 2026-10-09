@@ -1,0 +1,40 @@
+# Brings up the [dns] group (bind on dns, AdGuardHome on dnsguard)
+# ahead of everything else. roles/common's internal_dns.yml points
+# every other VM at dnsguard *only* and refuses to run until dnsguard
+# answers on port 53, so this has to go first on a fresh environment
+# -- right after plays/system/onboarding.yml, before
+# baseline_packages.yml touches any other host.
+#
+# The [dns] hosts themselves get a bootstrap-only public resolver
+# (Quad9) from that same task while dnsguard isn't up yet; the last
+# play here re-runs it now that AdGuardHome is answering, which swaps
+# that bootstrap resolver out for dnsguard alone.
+#
+#   ansible-playbook --ask-vault-pass -i inventory/<env> plays/apps/dns.yml
+- name: Deploy the internal DNS servers
+  hosts: dns
+  become: true
+
+  roles:
+    - common
+    - firewall
+    - containerapps
+
+- name: Drop the [dns] group's bootstrap resolver
+  hosts: dns
+  become: true
+
+  tasks:
+    - name: Re-point DNS now that dnsguard is answering
+      ansible.builtin.import_role:
+        name: common
+        tasks_from: internal_dns.yml
+
+    - name: Fail if the bootstrap resolver is still in place
+      ansible.builtin.assert:
+        that: internal_dns_dnsguard_probe is not failed
+        fail_msg: >-
+          dnsguard still isn't answering on port 53 after deploying
+          AdGuardHome -- check `systemctl --user status adguardhome`
+          as the containerapps user on dnsguard. dns/dnsguard are
+          still using the bootstrap resolver (Quad9).

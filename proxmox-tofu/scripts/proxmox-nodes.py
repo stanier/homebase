@@ -4,13 +4,10 @@ environments/<env>/providers.tf.
 
 Reads hosts.ini's [proxmox] group (ansible-playbooks/inventory/<env>,
 ANSIBLE_INVENTORY_ENV -- defaults to "testzone", see vm-hostvars.py's own
-comment) and hands back each node's real name and API/SSH address, keyed
-by a generic "node1"/"node2"/... alias assigned in [proxmox] group
-order -- the same aliases scripts/vm-hostvars.py assigns each VM's
-`node_alias`, and the same ones providers.tf's provider blocks use. That
-keeps every actual Proxmox node name out of the .tf files entirely:
-providers.tf just picks data.external.proxmox_nodes.result["node1"],
-never the node's real name.
+comment) and hands back each node's API/SSH address, API identity,
+storage and VM bridges/gateway, keyed by the node's real name. providers.tf's
+for_each'd provider and vms.tf's single module are keyed by that same
+name, so adding a node is an inventory change only -- no .tf edits.
 
 Also reads each node's effective ansible_user (required) and
 ansible_ssh_private_key_file (optional, defaults to the same
@@ -35,8 +32,9 @@ instead of assuming a fixed file) without its cost (never touches
 group_vars/all at all, so no vault password needed).
 
 stdin: the `external` data source's query object (ignored, no inputs
-needed here). stdout: {"json": "<alias -> {name, host, ssh_user,
-ssh_private_key_file} as a JSON string>"} -- same nested-string
+needed here). stdout: {"json": "<node name -> {host, ssh_user,
+ssh_private_key_file, api_user, api_token_id, storage, snippet_storage,
+app_bridge, app_gateway, mgmt_bridge} as a JSON string>"} -- same nested-string
 convention as vm-hostvars.py, for the same reason (`external` only
 allows string values in its result).
 """
@@ -131,7 +129,7 @@ def main():
         sys.exit(1)
 
     result = {}
-    for i, (name, inline_vars) in enumerate(proxmox_hosts):
+    for name, inline_vars in proxmox_hosts:
         hv = effective_hostvars(inventory_dir, "proxmox", name, inline_vars)
         if "ansible_user" not in hv:
             print(
@@ -141,13 +139,34 @@ def main():
                 file=sys.stderr,
             )
             sys.exit(1)
-        result[f"node{i + 1}"] = {
-            "name": name,
+        missing = [k for k in ("proxmox_app_bridge", "proxmox_app_gateway", "proxmox_mgmt_bridge") if k not in hv]
+        if missing:
+            print(
+                f"{name} (in [proxmox]) has no effective {', '.join(missing)} -- "
+                "VMs cloned onto it need to know which bridges/gateway to use. "
+                "Set them in group_vars/proxmox/ or host_vars.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        result[name] = {
             "host": hv["ansible_host"],
             "ssh_user": hv["ansible_user"],
             "ssh_private_key_file": hv.get(
                 "ansible_ssh_private_key_file", "~/.ssh/id_ed25519"
             ),
+            "api_user": hv.get("proxmox_api_user", "root@pam"),
+            "api_token_id": hv.get("proxmox_api_token_id", "ansible"),
+            "storage": hv.get("proxmox_storage_pool", "local"),
+            # Snippets need a dir-backed storage with the Snippets content
+            # type enabled; defaults to the same pool as the disks.
+            "snippet_storage": hv.get(
+                "proxmox_snippet_storage", hv.get("proxmox_storage_pool", "local")
+            ),
+            # Per node, not global: a node outside the home network (e.g.
+            # a rented box) has its own bridges and gateway.
+            "app_bridge": hv["proxmox_app_bridge"],
+            "app_gateway": hv["proxmox_app_gateway"],
+            "mgmt_bridge": hv["proxmox_mgmt_bridge"],
         }
 
     print(json.dumps({"json": json.dumps(result)}))

@@ -9,6 +9,11 @@ PublishPort=3000:3000
 EnvironmentFile=/srv/containers/container-files/grafana/.env
 Volume=grafana_grafana_data:/var/lib/grafana:U
 Volume=/srv/containers/container-files/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro,z
+# Dashboard provider + the dashboards themselves are plain files tracked
+# in this repo (unlike datasources/, which Ansible templates in since it
+# carries the InfluxDB token).
+Volume=/srv/containers/container-files/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro,z
+Volume=/srv/containers/container-files/grafana/dashboards:/etc/grafana/dashboards:ro,z
 # LDAP config file + the FreeIPA CA it needs to trust the LDAPS
 # connection -- see host_vars/metrics1.yml's containerapps_secret_files
 # and GF_AUTH_LDAP_CONFIG_FILE.

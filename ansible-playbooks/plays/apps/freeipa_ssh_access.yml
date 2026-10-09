@@ -1,6 +1,11 @@
 - name: Configure FreeIPA HBAC/sudo policy for interactive SSH access
   hosts: freeipa
-  become: false
+  # ansible-freeipa's modules run on the IPA server itself (server
+  # API context, kinit'ing as admin with ipaadmin_password) instead of
+  # community.general.ipa_*'s JSON-RPC over HTTPS -- whose 12.x+
+  # response check fails every member add on IPA's normal all-empty
+  # "failed" result. They expect root on the server.
+  become: true
   gather_facts: false
 
   tasks:
@@ -28,79 +33,67 @@
       no_log: true
 
     - name: Create/update each personal admin account
-      community.general.ipa_user:
+      freeipa.ansible_freeipa.ipauser:
+        ipaadmin_password: "{{ freeipa_admin_password }}"
         name: "{{ item.uid }}"
-        givenname: "{{ item.givenname }}"
-        sn: "{{ item.sn }}"
+        first: "{{ item.givenname }}"
+        last: "{{ item.sn }}"
         sshpubkey: "{{ item.sshpubkey }}"
+        shell: "{{ item.loginshell | default(omit) }}"
         password: "{{ item.password }}"
         update_password: on_create
-        ipa_host: "{{ inventory_hostname }}.{{ base_domain }}"
-        ipa_user: admin
-        ipa_pass: "{{ freeipa_admin_password }}"
       loop: "{{ freeipa_admin_users }}"
       loop_control:
         label: "{{ item.uid }}"
       no_log: true
 
+    # action: group (the default) with a member list makes that list
+    # the group's exact membership -- same as ipa_group's append: false.
     - name: Create the fleet-admins user group
-      community.general.ipa_group:
+      freeipa.ansible_freeipa.ipagroup:
+        ipaadmin_password: "{{ freeipa_admin_password }}"
         name: fleet-admins
         user: "{{ freeipa_admin_users | map(attribute='uid') | list }}"
-        append: false
-        ipa_host: "{{ inventory_hostname }}.{{ base_domain }}"
-        ipa_user: admin
-        ipa_pass: "{{ freeipa_admin_password }}"
 
     - name: Create the freeipa-server hostgroup
-      community.general.ipa_hostgroup:
+      freeipa.ansible_freeipa.ipahostgroup:
+        ipaadmin_password: "{{ freeipa_admin_password }}"
         name: freeipa-server
         host:
           - "{{ inventory_hostname }}.{{ base_domain }}"
-        ipa_host: "{{ inventory_hostname }}.{{ base_domain }}"
-        ipa_user: admin
-        ipa_pass: "{{ freeipa_admin_password }}"
 
     - name: Create the fleet-vms hostgroup
-      community.general.ipa_hostgroup:
+      freeipa.ansible_freeipa.ipahostgroup:
+        ipaadmin_password: "{{ freeipa_admin_password }}"
         name: fleet-vms
         host: "{{ groups['vm'] | difference([inventory_hostname]) | difference(freeipa_ssh_excluded_vms | default([])) | map('regex_replace', '^(.*)$', '\\1.' + base_domain) | list }}"
-        ipa_host: "{{ inventory_hostname }}.{{ base_domain }}"
-        ipa_user: admin
-        ipa_pass: "{{ freeipa_admin_password }}"
 
     - name: Disable FreeIPA's default allow-all HBAC rule
-      community.general.ipa_hbacrule:
+      freeipa.ansible_freeipa.ipahbacrule:
+        ipaadmin_password: "{{ freeipa_admin_password }}"
         name: allow_all
         state: disabled
-        ipa_host: "{{ inventory_hostname }}.{{ base_domain }}"
-        ipa_user: admin
-        ipa_pass: "{{ freeipa_admin_password }}"
 
     - name: Allow fleet-admins to SSH into the freeipa server and fleet VMs
-      community.general.ipa_hbacrule:
+      freeipa.ansible_freeipa.ipahbacrule:
+        ipaadmin_password: "{{ freeipa_admin_password }}"
         name: allow-fleet-admins-ssh
         hostgroup:
           - freeipa-server
           - fleet-vms
-        usergroup:
+        group:
           - fleet-admins
-        service:
+        hbacsvc:
           - sshd
-        ipa_host: "{{ inventory_hostname }}.{{ base_domain }}"
-        ipa_user: admin
-        ipa_pass: "{{ freeipa_admin_password }}"
 
     - name: Allow fleet-admins to sudo (password required, no NOPASSWD)
-      community.general.ipa_sudorule:
+      freeipa.ansible_freeipa.ipasudorule:
+        ipaadmin_password: "{{ freeipa_admin_password }}"
         name: allow-fleet-admins-sudo
         hostgroup:
           - freeipa-server
           - fleet-vms
-        usergroup:
+        group:
           - fleet-admins
         cmdcategory: all
         runasusercategory: all
-        ipa_host: "{{ inventory_hostname }}.{{ base_domain }}"
-        ipa_user: admin
-        ipa_pass: "{{ freeipa_admin_password }}"

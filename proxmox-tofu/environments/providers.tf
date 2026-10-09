@@ -1,33 +1,20 @@
+# One provider instance per [proxmox] node, keyed by the node's real
+# name. Connection details come from scripts/proxmox-nodes.py.
 provider "proxmox" {
-  alias     = "node1"
-  endpoint  = "https://${local.nodes.node1.host}:8006/"
-  api_token = "root@pam!ansible=${var.node1_api_token_secret}"
+  alias    = "by_node"
+  for_each = var.proxmox_nodes
+
+  endpoint  = "https://${local.nodes[each.key].host}:8006/"
+  api_token = "${local.nodes[each.key].api_user}!${local.nodes[each.key].api_token_id}=${var.proxmox_api_token_secrets[each.key]}"
   insecure  = true # self-signed cert, same as proxmox_api_validate_certs: false
 
   ssh {
-    username    = local.nodes.node1.ssh_user
-    private_key = file(pathexpand(local.nodes.node1.ssh_private_key_file))
+    username    = local.nodes[each.key].ssh_user
+    private_key = file(pathexpand(local.nodes[each.key].ssh_private_key_file))
 
     node {
-      name    = local.nodes.node1.name
-      address = local.nodes.node1.host
-    }
-  }
-}
-
-provider "proxmox" {
-  alias     = "node2"
-  endpoint  = "https://${local.nodes.node2.host}:8006/"
-  api_token = "root@pam!ansible=${var.node2_api_token_secret}"
-  insecure  = true
-
-  ssh {
-    username    = local.nodes.node2.ssh_user
-    private_key = file(pathexpand(local.nodes.node2.ssh_private_key_file))
-
-    node {
-      name    = local.nodes.node2.name
-      address = local.nodes.node2.host
+      name    = each.key
+      address = local.nodes[each.key].host
     }
   }
 }

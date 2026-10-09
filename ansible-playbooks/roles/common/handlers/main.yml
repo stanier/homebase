@@ -15,3 +15,10 @@
   # new DNS actually takes effect this run instead of waiting for the
   # next reboot/manual nmcli up.
   ansible.builtin.command: nmcli con up "cloud-init eth0"
+
+- name: reapply management interface connection
+  # device reapply, not con up -- Ansible's own SSH session arrives on
+  # this interface (ansible_host is management_ip), and con up bounces
+  # the link. reapply pushes the changed DNS settings in place.
+  ansible.builtin.command:
+    argv: [nmcli, device, reapply, "{{ management_interface }}"]

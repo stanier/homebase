@@ -1,6 +1,9 @@
 # Typical Procedure
 
 * onboard
+* dns (`plays/apps/dns.yml` -- must come before anything else touches
+  a non-DNS host; `roles/common` refuses to run on one until dnsguard
+  answers)
 * baseline
 * logging
 * update
@@ -26,8 +29,14 @@ Needed either way, regardless of which path below actually provisions
 the VM -- both clone from these same templates:
 
 ```
-ansible-playbook plays/vm/build_proxmox_templates.yml -i inventory/testzone --tags templates
+ansible-playbook plays/vm/build_templates_pve.yml -i inventory/testzone --tags templates
 ```
+
+That only builds templates that are missing. To rebuild existing ones
+from a fresh upstream image -- worth doing every week or two, since the
+build bakes in a full package upgrade and a stale template makes every
+fresh clone's first update slow -- add `-e proxmox_template_rebuild=true`.
+Existing VMs are unaffected (they're full clones, not linked).
 
 This also bakes `proxmox_template_bake_packages` (`roles/hypervisor/defaults/main.yml`)
 into the staged image via `virt-customize` before import, so every clone

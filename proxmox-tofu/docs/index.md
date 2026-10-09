@@ -17,7 +17,7 @@ fits into the wider provision → onboard → deploy pipeline.
 **Out of scope, deliberately, for now:**
 
 - Building the golden templates themselves
-  (`plays/build_proxmox_templates.yml`) — still Ansible. This repo only
+  (`plays/vm/build_templates_pve.yml`) — still Ansible. This repo only
   ever clones an existing template vmid.
 - Everything after boot — onboarding, config management, snapshots,
   updates. Still Ansible, unchanged — see `ansible-playbooks`'

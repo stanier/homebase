@@ -29,20 +29,6 @@ proxmox_api_validate_certs: false
 # separate long-poll wait for a Proxmox task (clone/stop/etc) to finish.
 proxmox_api_timeout: 30
 
-# Where each build_templates.yml run stages a cloud image on the Proxmox
-# node's own filesystem before importing it as a disk -- get_url needs a
-# real filesystem path, there's no API call that pulls an arbitrary URL
-# straight into storage. Cleaned up after each template build.
-#
-# Must be proxmox_storage_pool's own "import" content directory: the
-# actual disk-import task (build_template.yml) references the staged
-# file via the storage-relative "<STORAGE>:import/<FILE>" volid, not
-# this raw path, since a raw absolute path in import_from is rejected
-# for anything but a real interactive root session (API tokens included,
-# even root@pam's). This default matches the "local" storage's import
-# dir; repoint it if proxmox_storage_pool is ever something else.
-proxmox_image_staging_dir: /var/lib/vz/import
-
 # Packages baked into the staged image (via virt-customize) before it's
 # imported as a template's boot disk, keyed by each template's own
 # os_family (see proxmox_templates' os_family field). Every clone of
@@ -50,14 +36,23 @@ proxmox_image_staging_dir: /var/lib/vz/import
 # their install cost (repo metadata + download) again on every single
 # VM every time the common/node_exporter/auditd roles run.
 #
-# Deliberately only packages that are (a) on-by-default for literally
-# every host regardless of group -- see common/tasks/version_control.yml,
-# acl.yml, enable_epel.yml, and node_exporter_enabled/auditd_enabled's
-# defaults -- and (b) a plain package install with no per-host state
-# tied to the moment of installation. tailscale/firewalld/wazuh-agent
-# are deliberately left out: the first two default to disabled and are
-# opt-in per host (baking them into every template would install unused
-# daemons on hosts that never enable them), and wazuh-agent's %post
+# Deliberately only packages that are (a) installed on literally every
+# host regardless of group -- see common/tasks/version_control.yml,
+# acl.yml, enable_epel.yml, node_exporter_enabled/auditd_enabled's
+# defaults, and roles/postfix + roles/mail_server between them covering
+# every host -- or (b) opt-in but common enough that the install cost
+# outweighs a disabled unit sitting on hosts that don't use it (see
+# proxmox_template_bake_disabled_services below), and in either case a
+# plain package install with no per-host state tied to the moment of
+# installation. qemu-guest-agent is there because build_template.yml
+# sets agent: true on every template, and Proxmox's graceful shutdown
+# (Tofu's destroy path for non-testzone VMs) goes through the agent --
+# the Debian genericcloud image doesn't ship it.
+#
+# postfix is RedHat-only: Debian's postinst wants a debconf answer
+# roles/postfix/mail_server preseed per host, so it stays a role-time
+# install there. tailscale/wazuh-agent are deliberately left out:
+# tailscale is rare enough not to be worth it, and wazuh-agent's %post
 # script does live enrollment against the manager using install-time
 # env vars, so pre-baking it would decouple "installed" from "enrolled"
 # in a way roles/wazuh_agent doesn't expect.
@@ -77,11 +72,83 @@ proxmox_template_bake_packages:
     - acl
     - audit
     - node-exporter
+    - qemu-guest-agent
+    - firewalld
+    - postfix
   Debian:
     - git
     - acl
-    - audit
+    - auditd
     - prometheus-node-exporter
+    - qemu-guest-agent
+    - firewalld
+
+# Units disabled in the baked image after the installs above, keyed by
+# os_family like proxmox_template_bake_packages (a unit that doesn't
+# exist in that family's image fails the whole virt-customize run).
+#
+# firewalld is opt-in (roles/firewall's firewall_enabled defaults to
+# false) -- baked so the hosts that do enable it skip a multi-minute
+# install, but disabled here so the hosts that don't never end up with
+# a firewall they didn't ask for. roles/firewall enables/starts it
+# itself when firewall_enabled is set.
+#
+# dnf-makecache.timer fires shortly after every boot and was ~30s of
+# each Rocky clone's boot; every role that installs anything refreshes
+# metadata itself anyway.
+proxmox_template_bake_disabled_services:
+  RedHat:
+    - firewalld
+    - dnf-makecache.timer
+  Debian:
+    - firewalld
+
+# Packages the upstream cloud image ships that are dead weight on a
+# single-purpose VM, removed in the bake after the installs above (same
+# os_family keying). common/tasks/trim_base_packages.yml removes the
+# same set from hosts cloned before this existed.
+#
+# - kdump-utils: reserves crashkernel= RAM in every guest (192M under
+#   4G, 256M above) for crash dumps nobody collects, and kdump.service
+#   was ~35s of every boot. Uninstalled rather than just disabled
+#   because its 92-crashkernel.install hook (auto_reset_crashkernel)
+#   writes crashkernel= back onto every newly installed kernel --
+#   build_template.yml strips the existing argument separately.
+# - udisks2: desktop/removable-disk management daemon.
+#
+# Nothing in either image depends on these (rpm -q --whatrequires).
+# fwupd can't go the same way -- on EL10 it Provides dbxtool, which the
+# dnf-protected shim-x64 requires -- so it's masked instead (below).
+proxmox_template_bake_uninstall_packages:
+  RedHat:
+    - kdump-utils
+    - udisks2
+  Debian: []
+
+# Units masked (not just disabled) in the baked image -- for packages
+# that have to stay installed but should never run. fwupd (firmware
+# updates for hardware a VM doesn't have) is D-Bus-activated, and
+# fwupd-refresh.timer pulled it in hourly; masking both stops either
+# path. common/tasks/trim_base_packages.yml masks the same units on
+# existing hosts.
+proxmox_template_bake_masked_services:
+  RedHat:
+    - fwupd.service
+    - fwupd-refresh.timer
+  Debian: []
+
+# Lines appended to the baked image's /etc/dnf/dnf.conf (RedHat only --
+# the stock file is a lone [main] section, so appending lands in it).
+# common/tasks/dnf_tuning.yml enforces the same settings on hosts cloned
+# before this existed. dnf's default of 3 parallel downloads is most of
+# why a fresh clone's first full upgrade is slow.
+proxmox_template_dnf_conf_lines:
+  - max_parallel_downloads=10
+
+# Set true (-e proxmox_template_rebuild=true) to have build_templates.yml
+# delete and rebuild every completed template, not just build missing
+# ones -- see that file's header.
+proxmox_template_rebuild: false
 
 # proxmox_templates (the key -> {image_url, vmid, ostype, ssh_user,
 # os_family} map consumed by
@@ -133,11 +200,12 @@ proxmox_app_bridge: ""
 # roles/management_network's split routing).
 proxmox_app_gateway: ""
 
-# Assumed /24s for both VLANs, matching every subnet already in use
-# across inventory/*/hosts.ini (192.0.2.0/24, 198.51.100.0/24,
-# 203.0.113.0/24). Override if a new VM ever lands on a differently
-# sized subnet.
-proxmox_network_prefix: 24
+# CIDR prefix lengths for net0 (app VLAN) and net1 (management VLAN).
+# Fallbacks only -- the real values live in inventory/<env>/group_vars/
+# vm.yml (shared with proxmox-tofu's vm-hostvars.py), overridable per
+# host in host_vars.
+app_network_prefix: 24
+management_network_prefix: 24
 
 proxmox_vm_nameservers: []
 
@@ -219,3 +287,23 @@ proxmox_snapshot_retention: 5
 # overwrites of the same name. Override with -e for a one-off snapshot
 # with a more meaningful name (see plays/vm/snapshot_vm.yml).
 proxmox_snapshot_name: "ansible-{{ ansible_date_time.iso8601_basic_short }}"
+
+# roles/hypervisor/tasks/ksm.yml -- ksmtuned starts merging pages once
+# free host memory drops below this percentage. Proxmox's stock 20 only
+# kicks in once a node is already short on RAM; at 50 merging runs as
+# soon as the node is half full, which on these two nodes is basically
+# always. KSM costs a little ksmd CPU in exchange.
+proxmox_ksm_thres_coef: 50
+
+# Fraction of proxmox_vm.memory a VM's balloon may be squeezed down to
+# when the host runs short (Proxmox's "Minimum memory"), unless
+# proxmox_vm.memory_min sets an explicit MiB value. Ballooning only
+# kicks in when the host is above ~80% RAM, so idle VMs give memory back
+# to busy ones instead of the node swapping. Set memory_min equal to
+# memory for anything with a fixed in-guest heap (JVM/OpenSearch) that
+# would rather OOM-kill than shrink.
+proxmox_vm_balloon_ratio: 0.5
+
+# roles/hypervisor/tasks/reboot.yml -- seconds to wait for the guest's
+# clean shutdown+start, and again for SSH to come back afterwards.
+proxmox_reboot_timeout: 300
