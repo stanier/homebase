@@ -21,6 +21,18 @@
     state: enabled
   when: firewall_enabled and firewall_allow_ssh
 
+# Rocky's stock public/internal zones allow the cockpit service; the
+# web console itself is uninstalled (common/tasks/trim_base_packages.yml),
+# so close the hole it leaves too.
+- name: Drop the stock cockpit service from the zone
+  ansible.posix.firewalld:
+    service: cockpit
+    zone: "{{ firewall_zone }}"
+    permanent: true
+    immediate: true
+    state: disabled
+  when: firewall_enabled
+
 - name: Allow configured ports open to any source
   ansible.posix.firewalld:
     port: "{{ item.port }}/{{ item.proto | default('tcp') }}"

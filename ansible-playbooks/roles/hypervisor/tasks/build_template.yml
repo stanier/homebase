@@ -74,10 +74,7 @@
 #   proxmox_template_bake_masked_services.
 # - clear the package-manager cache, so a clone's first real install
 #   isn't confused by a stale index the way the upstream Rocky cloud
-#   image's own dnf cache is. (RedHat) Since that's exactly what
-#   common/tasks/acl.yml's "dnf clean all" exists for, --touch its
-#   sentinel too, so clones don't wipe and re-download repo metadata a
-#   second time.
+#   image's own dnf cache is.
 # - (RedHat) relabel the whole filesystem with the guest's own setfiles.
 #   The appliance boots selinux=0, so every file rpm/useradd wrote above
 #   (incl. a --update'd /usr/lib/systemd/systemd) is left unlabeled.
@@ -110,7 +107,7 @@
         + bake_disable_args
         + bake_mask_args
         + ['--run-command', 'dnf clean all' if tmpl.os_family == 'RedHat' else 'apt-get clean']
-        + (['--touch', '/etc/.dnf-cache-cleared'] + bake_selinux_args if tmpl.os_family == 'RedHat' else [])
+        + (bake_selinux_args if tmpl.os_family == 'RedHat' else [])
       }}
   vars:
     bake_install_args: >-

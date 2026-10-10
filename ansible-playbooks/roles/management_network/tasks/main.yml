@@ -141,6 +141,16 @@
     state: enabled
   when: management_network_enabled and firewall_enabled | default(false)
 
+# Same stock cockpit allowance roles/firewall drops from firewall_zone.
+- name: Drop the stock cockpit service from the management zone
+  ansible.posix.firewalld:
+    zone: "{{ management_firewalld_zone }}"
+    service: cockpit
+    permanent: true
+    immediate: true
+    state: disabled
+  when: management_network_enabled and firewall_enabled | default(false)
+
 # --- sshd ---------------------------------------------------------------
 
 - name: "Bind sshd to the management VLAN instead of the 0.0.0.0/:: wildcard"

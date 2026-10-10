@@ -9,11 +9,12 @@
 # boot -- this doesn't reboot anything itself; plays/vm/reboot_vms.yml
 # or the next update.yml reboot picks it up.
 - block:
-  - name: Remove kdump and udisks2
+  - name: Remove kdump, udisks2 and cockpit
     ansible.builtin.dnf:
       name:
         - kdump-utils
         - udisks2
+        - cockpit*
       state: absent
       autoremove: false
 

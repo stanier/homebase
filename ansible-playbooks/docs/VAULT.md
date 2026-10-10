@@ -468,13 +468,18 @@ Both are exposed as `freeipa_ds_password`/`freeipa_admin_password` in
 `base_domain` by `group_vars/all/vars.yml` directly, no vault entry
 needed.
 
-Two more, for Plan 3's LDAP bind accounts (`roles/freeipa`'s own
-`ipa_user` task creates `svc-keycloak-bind`/`svc-authentik-bind` from
-these): `vault_freeipa_keycloak_bind_password` and
-`vault_freeipa_authentik_bind_password`, exposed the same way as
-`freeipa_keycloak_bind_password`/`freeipa_authentik_bind_password`.
-These are the passwords Keycloak's LDAP User Federation and Authentik's
-LDAP Source authenticate to FreeIPA with -- not personal accounts, so
+Four more, for Plan 3's LDAP bind accounts (`roles/freeipa`'s own
+`ipa_user` task creates `svc-keycloak-bind`/`svc-authentik-bind`/
+`svc-grafana-bind`/`svc-gitea-bind` from these):
+`vault_freeipa_keycloak_bind_password`,
+`vault_freeipa_authentik_bind_password`,
+`vault_freeipa_grafana_bind_password` and
+`vault_freeipa_gitea_bind_password`, each exposed the same way as
+`freeipa_<service>_bind_password`. All four are required -- the task
+loops over every account, so a missing one fails the whole task.
+These are the passwords Keycloak's LDAP User Federation, Authentik's
+LDAP Source, Grafana's `ldap.toml` and Gitea's LDAP auth source
+authenticate to FreeIPA with -- not personal accounts, so
 generate them the same way as any other opaque service secret
 (`openssl rand -base64 24`, no need to remember them).
 

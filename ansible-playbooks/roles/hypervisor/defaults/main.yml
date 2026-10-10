@@ -115,6 +115,10 @@ proxmox_template_bake_disabled_services:
 #   writes crashkernel= back onto every newly installed kernel --
 #   build_template.yml strips the existing argument separately.
 # - udisks2: desktop/removable-disk management daemon.
+# - cockpit*: Rocky's cloud image ships the web console (cockpit-ws,
+#   -bridge, -system) socket-activated on :9090. Everything here is
+#   managed through Ansible, so it's only attack surface. Globbed since
+#   the subpackage set differs between EL releases.
 #
 # Nothing in either image depends on these (rpm -q --whatrequires).
 # fwupd can't go the same way -- on EL10 it Provides dbxtool, which the
@@ -123,6 +127,7 @@ proxmox_template_bake_uninstall_packages:
   RedHat:
     - kdump-utils
     - udisks2
+    - cockpit*
   Debian: []
 
 # Units masked (not just disabled) in the baked image -- for packages
