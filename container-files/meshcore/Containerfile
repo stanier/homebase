@@ -1,0 +1,18 @@
+# meshcore-gateway (https://gitea.<base_domain>/keyton/meshcore-gateway),
+# installed from a source archive rather than vendored here. The archive
+# URL comes from host_vars/meshcore1.yml (meshcore_gateway_source) via
+# data/gateway-source, so changing the pinned ref there is what rebuilds
+# the image.
+FROM docker.io/library/python:3.12-slim
+
+# The lab root CA, so pip can fetch from Gitea. PIP_CERT points pip at
+# the system bundle (public CAs plus this one) instead of certifi's.
+COPY root-ca.crt /usr/local/share/ca-certificates/homelab-root-ca.crt
+RUN update-ca-certificates
+ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt
+
+COPY data/gateway-source /tmp/gateway-source
+RUN pip install --no-cache-dir "$(cat /tmp/gateway-source)"
+
+ENV PYTHONUNBUFFERED=1
+CMD ["meshcore-gateway"]

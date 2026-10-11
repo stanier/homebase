@@ -38,6 +38,10 @@ Volume=/srv/containers/container-files/matrix/data/homeserver.yaml:/config/homes
 # generate missing keys anyway, and losing this key changes the
 # server's identity.
 Volume=/srv/containers/container-files/matrix/data/signing.key:/config/signing.key:ro,z
+# Appservice registration for metrics1's alert bot (@alertbot), listed
+# in homeserver.yaml's app_service_config_files. An appservice token is
+# how a bot gets an access token on an SSO-only server.
+Volume=/srv/containers/container-files/matrix/data/alertbot-registration.yaml:/config/alertbot-registration.yaml:ro,z
 # media_store lives here.
 Volume=matrix_synapse_data:/data
 HealthCmd=curl -fSs http://localhost:8008/health

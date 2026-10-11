@@ -1,8 +1,6 @@
-# One instance of this module = one cloned VM, equivalent to what
-# ansible-playbooks' roles/hypervisor/tasks/create_vm.yml does per host in
-# [vm]. Golden templates themselves are still built by Ansible
-# (plays/build_proxmox_templates.yml) -- this module only ever clones an
-# already-existing template vmid, it never builds one.
+# One instance of this module = one cloned VM per host in [vm]. Golden
+# templates are built by Ansible (plays/vm/build_templates_pve.yml) --
+# this module only ever clones an already-existing template vmid.
 
 variable "name" {
   description = "inventory_hostname equivalent -- also the Proxmox VM name."
@@ -70,6 +68,12 @@ variable "cpu_type" {
   description = "Emulated CPU type -- \"host\" by default, same reasoning as proxmox_vm_cpu in the Ansible role: the Proxmox nodes here aren't clustered, so there's no cross-node migration compatibility to give up."
   type        = string
   default     = "host"
+}
+
+variable "usb_mappings" {
+  description = "Names of USB resource mappings on this VM's node to pass through (proxmox_vm.usb_mappings), e.g. [\"meshcore\"]. The mapping must already exist on the node."
+  type        = list(string)
+  default     = []
 }
 
 variable "vga_type" {
@@ -145,11 +149,9 @@ variable "management_network_prefix" {
 variable "management_mac" {
   description = <<-EOT
     Pinned MAC for net1, e.g. "02:42:FF:00:01:02" -- computed by the caller
-    from management_mac_prefix + vmid, same as create_vm.yml's
-    management_mac fact. Empty string skips MAC pinning and the mgmt-NIC
-    rename snippet entirely (net1 keeps whatever MAC/name Proxmox and the
-    guest assign it), matching the Ansible role's behavior when
-    management_mac_prefix is unset.
+    from management_mac_prefix + vmid. Empty string skips MAC pinning and
+    the mgmt-NIC rename snippet entirely (net1 keeps whatever MAC/name
+    Proxmox and the guest assign it).
   EOT
   type        = string
   default     = ""
@@ -187,7 +189,7 @@ variable "ssh_public_key" {
 }
 
 variable "started" {
-  description = "Power state -- true keeps this VM running (state: started in create_vm.yml)."
+  description = "Power state -- true keeps this VM running."
   type        = bool
   default     = true
 }

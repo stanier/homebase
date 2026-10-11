@@ -3,8 +3,6 @@
   tags: provision_vms
 - import_playbook: system/onboarding.yml
   tags: onboarding
-- import_playbook: apps/dns.yml
-  tags: dns
 - import_playbook: system/baseline_packages.yml
   tags: baseline_packages
 - import_playbook: network/firewall.yml
@@ -15,25 +13,9 @@
   tags: update
 - import_playbook: apps/mail_server.yml
   tags: mail_server
-- import_playbook: apps/freeipa.yml
-  tags: freeipa
 - import_playbook: apps/podman.yml
   tags: podman
-- import_playbook: system/node_exporter.yml
-  tags: node_exporter
-- import_playbook: system/podman_exporter.yml
-  tags: podman_exporter
-- import_playbook: apps/keycloak_ldap_federation.yml
-  tags: keycloak_ldap_federation
-- import_playbook: apps/gitea_ldap_auth.yml
-  tags: gitea_ldap_auth
-- import_playbook: apps/keycloak_vaultwarden_client.yml
-  tags: keycloak_vaultwarden_client
 - import_playbook: system/logging.yml
   tags: logging
-- import_playbook: system/auditd.yml
-  tags: auditd
-- import_playbook: system/wazuh_agent.yml
-  tags: wazuh_agent
 - import_playbook: apps/mail.yml
   tags: mail

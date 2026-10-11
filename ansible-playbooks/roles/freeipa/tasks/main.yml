@@ -1,16 +1,4 @@
 ---
-# FreeIPA is deliberately NOT deployed through roles/containerapps --
-# the upstream freeipa-server container image needs systemd as PID 1
-# plus broad privileges (Directory Server, Dogtag CA, KDC, and Apache
-# all running as sub-services under one process), which doesn't fit
-# rootless Podman/Quadlet like every other service in this fleet. This
-# is a native package install on its own VM instead, same pattern as
-# roles/mail_server/roles/postfix.
-#
-# ipa-server-install is neither idempotent nor safe to re-run -- it
-# refuses outright once /etc/ipa/default.conf exists -- so every
-# mutating task below is gated on that file's absence rather than
-# relying on the installer's own (nonexistent) check-mode support.
 - name: Check whether this host is already an IPA server
   ansible.builtin.stat:
     path: /etc/ipa/default.conf
@@ -36,42 +24,15 @@
     state: present
   when:
     - freeipa_enabled
-    - ansible_os_family == "RedHat"
+    - ansible_facts['os_family'] == "RedHat"
 
-- name: Set this host's hostname to its FQDN
-  # ipa-server-install refuses a short hostname -- the realm/Kerberos
-  # principal namespace is built from the FQDN, and fixing this after
-  # the fact means a full reinstall, not a config edit.
-  ansible.builtin.hostname:
-    name: "{{ inventory_hostname }}.{{ base_domain }}"
-  when: freeipa_enabled
-
-- name: Ensure the FQDN resolves locally before install
-  # ipa-server-install does its own forward/reverse DNS sanity checks
-  # and aborts if the hostname it was just given doesn't resolve -- belt
-  # and suspenders alongside the real A record this depends on
-  # (container-sandbox's dns/ zone -- see that host_vars' freeipa
-  # comment), since a fresh VM's own /etc/hosts has no entry yet for
-  # the FQDN roles/common's cloud-init only just gave it.
-  ansible.builtin.lineinfile:
-    path: /etc/hosts
-    regexp: "^{{ ansible_default_ipv4.address }}\\s"
-    line: "{{ ansible_default_ipv4.address }} {{ inventory_hostname }}.{{ base_domain }} {{ inventory_hostname }}"
-    state: present
+- name: Set the FQDN hostname and its /etc/hosts entry
+  ansible.builtin.import_role:
+    name: common
+    tasks_from: set_hostname
   when: freeipa_enabled
 
 - name: Run ipa-server-install
-  # No --setup-dns: AdGuardHome/bind (container-sandbox) already owns
-  # base_domain's authoritative DNS. Running FreeIPA's own integrated
-  # DNS alongside it would mean two servers claiming authority over the
-  # same zone -- letting IPA clients discover it via the SRV records
-  # this repo's dns/ zone file carries by hand instead is the same
-  # outcome without the split-brain risk.
-  #
-  # no_log because the passwords are only ever passed as argv here --
-  # ipa-server-install has no stdin/file-based password option, so this
-  # is the best available short of accepting them briefly appearing in
-  # /proc/<pid>/cmdline during the run.
   ansible.builtin.command:
     argv:
       - ipa-server-install
@@ -86,20 +47,7 @@
     - freeipa_enabled
     - not freeipa_default_conf.stat.exists
 
-# --- Plan 3: LDAP bind accounts for Keycloak/Authentik/Grafana/Gitea ---
-
 - name: Create LDAP bind service accounts for Keycloak/Authentik/Grafana/Gitea
-  # krbpasswordexpiration far in the future: FreeIPA normally flags an
-  # admin-set password as requiring an interactive change at next login
-  # (fine for a real user, useless for a service account that only ever
-  # does a non-interactive LDAP simple bind and has no way to complete
-  # that flow). Setting an explicit far-future expiration is what
-  # bypasses that -- see this module's own EXAMPLES block, which uses
-  # the same field for the opposite effect (forcing an immediate reset).
-  #
-  # update_password: on_create -- without it, every run would try to
-  # reset the password back to this value and report "changed" forever
-  # even when nothing actually needs to change.
   community.general.ipa_user:
     name: "{{ item.name }}"
     givenname: "{{ item.name }}"
@@ -110,6 +58,13 @@
     ipa_host: "{{ inventory_hostname }}.{{ base_domain }}"
     ipa_user: admin
     ipa_pass: "{{ freeipa_admin_password }}"
+    # The first API call after httpd starts loads ipalib under mod_wsgi and
+    # routinely blows past the module's 10s default.
+    ipa_timeout: 60
+  register: freeipa_bind_user
+  until: freeipa_bind_user is not failed
+  retries: 3
+  delay: 10
   loop:
     - name: svc-keycloak-bind
       password: "{{ freeipa_keycloak_bind_password }}"
@@ -125,13 +80,6 @@
   when: freeipa_enabled
 
 - name: Fetch FreeIPA's CA certificate for distribution to LDAP consumers
-  # Keycloak/Authentik both need this to trust LDAPS -- see vars.yml's
-  # freeipa_ca_cert (same lookup('file', ...) distribution pattern as
-  # root_ca_cert, a different and unrelated CA). Always re-fetched
-  # rather than gated on freeipa_default_conf: cheap, idempotent (fetch
-  # only reports changed if the content actually differs), and this way
-  # a CA renewal gets picked up automatically instead of needing a
-  # manual copy step remembered.
   ansible.builtin.fetch:
     src: /etc/ipa/ca.crt
     dest: "{{ inventory_dir }}/group_vars/files/freeipa-ca.crt"

@@ -1,12 +1,4 @@
 ---
-# Lets proxmox-tofu (a separate repo -- see its README) write the
-# mgmt-NIC-rename cloud-init snippet into proxmox_snippet_dir over plain
-# SSH as proxmox_snippet_write_user. Unlike legacy_create_vm.yml's equivalent
-# task in this repo, Tofu's own SSH file transfer has no become/sudo
-# step of its own -- it just runs `tee` as whatever user it connects as
-# -- so that user needs real filesystem write access instead. Self-heals
-# on every run, same pattern as repo_hygiene.yml; included as a
-# pre_task from plays/system/update.yml for any host in [proxmox].
 - name: Ensure the snippet-writers group exists
   ansible.builtin.group:
     name: "{{ proxmox_snippet_group }}"
@@ -25,9 +17,6 @@
     group: "{{ proxmox_snippet_group }}"
     mode: "2775"
 
-# Only files, deliberately -- proxmox_snippet_dir shouldn't have
-# subdirectories, but if it ever does, its own mode above already covers
-# it and this shouldn't touch anything inside them.
 - name: Find snippet files written before this group existed
   ansible.builtin.find:
     paths: "{{ proxmox_snippet_dir }}"

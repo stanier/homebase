@@ -1,6 +1,0 @@
----
-# stub: OpenBSD hosts
-- name: Update openbsd_pkg packages
-  community.general.openbsd_pkg:
-    name: "*"
-    state: latest

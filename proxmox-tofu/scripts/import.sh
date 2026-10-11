@@ -83,6 +83,14 @@ print(json.dumps(secrets))
 TF_VAR_proxmox_nodes="$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1:]))' "${PROXMOX_NODES[@]}")"
 export TF_VAR_proxmox_api_token_secrets TF_VAR_proxmox_nodes
 
+# Same as tofu-with-vault-secrets.sh: every `tofu import` below
+# evaluates environments/data.tf's external data sources, and without
+# this they read testzone's inventory instead -- providers.tf then
+# for_each's over this environment's nodes but finds only testzone's in
+# local.nodes ("Invalid index" for any node testzone doesn't have).
+export ANSIBLE_INVENTORY_ENV="$ENVIRONMENT"
+export ANSIBLE_PLAYBOOKS_DIR
+
 cd "$ENV_DIR"
 tofu workspace select "$ENVIRONMENT"
 
@@ -101,18 +109,24 @@ already_imported() {
   grep -Fxq "$1" <<<"$EXISTING"
 }
 
-# name node vmid, sourced from vm-hostvars.py so this
+# name node vmid snippet_storage, sourced from vm-hostvars.py so this
 # never has to know which node a host is on, or how many hosts there
 # are, by itself. ANSIBLE_INVENTORY_ENV picks which inventory/<env>
 # vm-hostvars.py reads -- without it, it'd default to testzone's
 # regardless of which environment this script was invoked for, same
 # environment-mixup ANSIBLE_INVENTORY_ENV exists everywhere else to avoid.
 VM_HOSTVARS="$(ANSIBLE_PLAYBOOKS_DIR="$ANSIBLE_PLAYBOOKS_DIR" ANSIBLE_INVENTORY_ENV="$ENVIRONMENT" "$SCRIPT_DIR/vm-hostvars.py" <<<'{}')"
-mapfile -t HOSTS < <(VM_HOSTVARS="$VM_HOSTVARS" python3 <<'PYEOF'
+# Each node's snippet datastore, from the same proxmox-nodes.py Tofu
+# itself reads -- not a hardcoded "local", which mislabeled every
+# snippet on a node with proxmox_snippet_storage set elsewhere (e.g.
+# dangerzone's homelab, "data") as "not uploaded yet".
+PROXMOX_NODES_JSON="$(ANSIBLE_PLAYBOOKS_DIR="$ANSIBLE_PLAYBOOKS_DIR" ANSIBLE_INVENTORY_ENV="$ENVIRONMENT" "$SCRIPT_DIR/proxmox-nodes.py" <<<'{}')"
+mapfile -t HOSTS < <(VM_HOSTVARS="$VM_HOSTVARS" PROXMOX_NODES_JSON="$PROXMOX_NODES_JSON" python3 <<'PYEOF'
 import json, os
 data = json.loads(json.loads(os.environ["VM_HOSTVARS"])["json"])
+nodes = json.loads(json.loads(os.environ["PROXMOX_NODES_JSON"])["json"])
 for name, vm in data.items():
-    print(f"{name} {vm['node']} {vm['vmid']}")
+    print(f"{name} {vm['node']} {vm['vmid']} {nodes[vm['node']]['snippet_storage']}")
 PYEOF
 )
 
@@ -120,7 +134,7 @@ NOT_DEPLOYED=()
 NO_SNIPPET=()
 
 for entry in "${HOSTS[@]}"; do
-  read -r name node_real vmid <<<"$entry"
+  read -r name node_real vmid snippet_storage <<<"$entry"
 
   vm_addr="module.vm[\"$name\"].proxmox_virtual_environment_vm.this"
   snippet_addr="module.vm[\"$name\"].proxmox_virtual_environment_file.mgmt_rename[0]"
@@ -132,10 +146,10 @@ for entry in "${HOSTS[@]}"; do
     echo "  vm: already in state, skipping" >&2
   else
     # Not every host in hosts.ini's [vm] group has actually been cloned
-    # yet -- inventory can list a host before create_vm.yml (or now,
-    # `tofu apply`) has ever run for it. Rather than aborting the whole
-    # loop (set -e) the first time that happens, treat "no such vmid on
-    # this node" as "not deployed yet, apply will create it" and move
+    # yet -- inventory can list a host before `tofu apply` has ever run
+    # for it. Rather than aborting the whole loop (set -e) the first
+    # time that happens, treat "no such vmid on this node" as "not
+    # deployed yet, apply will create it" and move
     # on; any other failure (auth, network, wrong vmid typo) still needs
     # a human look, so it's surfaced but doesn't stop the remaining
     # hosts either -- re-run this script after fixing it.
@@ -165,13 +179,12 @@ for entry in "${HOSTS[@]}"; do
     echo "  mgmt-rename snippet: already in state, skipping" >&2
   else
     # A VM created before management_mac_prefix/the mgmt-rename snippet
-    # existed (plays/create_vm.yml never re-runs against an
-    # already-existing host on its own) has no snippet file to import
+    # existed has no snippet file to import
     # yet -- same "not deployed yet" treatment as the VM import above:
     # surface it and move on to the next host instead of letting set -e
     # abort the whole run over one host's missing snippet.
     set +e
-    snippet_import_output="$(tofu import "$snippet_addr" "$node_real/local:snippets/$name-mgmt-rename.yaml" 2>&1)"
+    snippet_import_output="$(tofu import "$snippet_addr" "$node_real/$snippet_storage:snippets/$name-mgmt-rename.yaml" 2>&1)"
     snippet_import_status=$?
     set -e
     echo "$snippet_import_output" >&2

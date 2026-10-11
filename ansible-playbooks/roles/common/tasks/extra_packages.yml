@@ -1,8 +1,0 @@
----
-- block:
-  - name: Install ncdu for disk usage inspection
-    ansible.builtin.package:
-      name: ncdu
-      state: present
-  tags:
-    - extra_packages

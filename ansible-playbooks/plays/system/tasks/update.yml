@@ -1,0 +1,31 @@
+---
+# Shared by plays/system/update.yml and plays/system/host_baseline.yml.
+- name: Proxmox node upkeep
+  when: "'proxmox' in group_names"
+  block:
+    - name: Use the no-subscription repo, not the paywalled enterprise one
+      ansible.builtin.include_role:
+        name: hypervisor
+        tasks_from: repo_hygiene
+
+    - name: Ensure the snippet-writer group/permissions proxmox-tofu needs
+      ansible.builtin.include_role:
+        name: hypervisor
+        tasks_from: snippet_permissions
+
+    - name: Ensure ksmtuned merges identical VM memory pages early
+      ansible.builtin.include_role:
+        name: hypervisor
+        tasks_from: ksm
+
+- name: Snapshot this VM before updating
+  ansible.builtin.include_role:
+    name: hypervisor
+    tasks_from: snapshot
+  when: proxmox_node is defined and proxmox_vmid is defined
+  tags: snapshot
+
+- name: Update packages
+  ansible.builtin.import_role:
+    name: common
+    tasks_from: update_packages

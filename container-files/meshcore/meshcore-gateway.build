@@ -1,0 +1,7 @@
+[Unit]
+Description=Build meshcore-gateway image
+
+[Build]
+ImageTag=localhost/meshcore-gateway
+File=Containerfile
+SetWorkingDirectory=/srv/containers/container-files/meshcore

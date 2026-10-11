@@ -45,7 +45,7 @@ A host only runs the services listed for it in
 | `caddy-l4` | Same as `caddy`, plus a custom `xcaddy` build that adds layer4 SSH-over-HTTPS routing for appdeploy'd SSH apps — only needed on the fleet's edge proxy (`app-proxy`); everywhere else runs plain `caddy` |
 | `dns` (BIND) | Authoritative DNS, RFC2136 dynamic updates for ACME DNS-01 |
 | `adguardhome` | Recursive DNS + ad/tracker blocking |
-| `alertmanager` | Alert routing/notification (pairs with `victoriametrics`/`grafana`) |
+| `alerting` | `vmalert` (evaluates the rules in `data/rules/` against `victoriametrics`) → `alertmanager` (routing, grouping, silences) → `matrix-alertmanager-receiver` (posts to a Matrix room on `matrix`) |
 | `authentik` | SSO / identity provider (server + worker + Postgres + Redis) |
 | `keycloak` | SSO / identity provider (server + Postgres) |
 | `gitea` | Git hosting |
@@ -60,11 +60,13 @@ A host only runs the services listed for it in
 | `syslog` | Central rsyslog receiver for the fleet |
 | `node-exporter` / `podman-exporter` | Prometheus metrics exporters (host / podman) |
 | `blackbox-exporter` | Probes services from the outside (HTTPS through Caddy, TLS cert expiry, DNS) for vmagent to scrape |
+| `pkgmirror` | Pull-through cache (nginx `proxy_cache`) for the fleet's dnf/apt repos; clients are pointed at it by `ansible-playbooks/roles/common`'s `package_mirror.yml` |
 | `trivy` | Vulnerability/SBOM scanner (server mode), for `gitea-runner` CI to scan images against |
 | `uptime-kuma` | External-facing uptime/status monitoring |
 | `wazuh` | Endpoint security (HIDS): manager + indexer + dashboard (agents installed by `ansible-playbooks/roles/wazuh_agent`) |
 | `vaultwarden` | Self-hosted Bitwarden-compatible password manager |
 | `wireguard` (`wg-easy`) | VPN entry point + web UI, for remote access into the homelab |
+| `meshcore` | MeshCore LoRa companion radio shared over MQTT: `mosquitto` plus `meshcore-gateway` (built from the meshcore-gateway repo), with the radio passed in by USB. Topic ACLs in `mosquitto/acl`. Also `meshcore-webui` (built from the meshcore-webui repo), a live view of the traffic at `mesh.<base_domain>`, behind `oauth2-proxy`'s Keycloak login. FreeIPA `fleet-admins` members can change channels and radio settings from it |
 | `windows` | A full Windows VM-in-a-container (`dockur/windows`), for one-off Windows-only needs |
 
 See [`docs/roadmap.md`](docs/roadmap.md) for services planned but not
@@ -82,7 +84,10 @@ yet added.
   publishing internal ports. `wazuh` follows the same pattern
   (`wazuh.network`) for its manager/indexer/dashboard, while still
   publishing the manager's agent-facing ports (1514/1515) since agents
-  connect cross-host.
+  connect cross-host. `alerting` mixes the two: Alertmanager and the
+  Matrix receiver share `alerting.network`, while `vmalert` runs
+  `Network=host` to reach VictoriaMetrics and Alertmanager over
+  loopback.
 - Named volumes (`Volume=<service>_<name>:/path`) are Podman-managed and
   host-local; bind mounts under `/srv/containers/container-files/...`
   come from this repo's sync. A few services (`gitea`'s

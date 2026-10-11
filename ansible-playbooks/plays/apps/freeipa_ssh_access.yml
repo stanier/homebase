@@ -1,10 +1,11 @@
+# Personal admin accounts (freeipa_admin_users in host_vars/freeipa.yml)
+# in a fleet-admins group that may SSH into and sudo (with password) on
+# the server and every enrolled VM. Replaces IPA's default allow_all.
 - name: Configure FreeIPA HBAC/sudo policy for interactive SSH access
   hosts: freeipa
-  # ansible-freeipa's modules run on the IPA server itself (server
-  # API context, kinit'ing as admin with ipaadmin_password) instead of
-  # community.general.ipa_*'s JSON-RPC over HTTPS -- whose 12.x+
-  # response check fails every member add on IPA's normal all-empty
-  # "failed" result. They expect root on the server.
+  # ansible-freeipa modules run on the server itself as root;
+  # community.general.ipa_*'s member adds fail on IPA's empty "failed"
+  # result as of 12.x.
   become: true
   gather_facts: false
 
@@ -16,8 +17,7 @@
           freeipa_admin_users is empty -- set it in host_vars/freeipa.yml
           with uid/givenname/sn/sshpubkey/password fields per entry,
           password referencing a vault_freeipa_<uid>_password (see
-          docs/VAULT.md for the vault_ convention to follow, and this
-          play's own header comment for the full shape).
+          docs/VAULT.md).
 
     - name: Require a non-empty password for every admin user
       ansible.builtin.assert:

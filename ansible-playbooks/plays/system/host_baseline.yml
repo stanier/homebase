@@ -1,0 +1,43 @@
+---
+# baseline_packages.yml, firewall.yml, management_network.yml and
+# update.yml as one free-strategy play, so a fast host runs straight
+# through instead of waiting for the slowest host at each play boundary.
+# Each step keeps its standalone play's tag; handlers are flushed after
+# each step, as they were when each was its own play. Keep in sync with
+# those plays.
+- name: Converge every host's baseline, firewall and packages
+  hosts: all
+  become: true
+  strategy: free
+
+  tasks:
+    - name: Converge to the common baseline
+      ansible.builtin.import_role:
+        name: common
+      tags: baseline_packages
+
+    - name: Flush baseline handlers
+      ansible.builtin.meta: flush_handlers
+      tags: always
+
+    - name: Configure the host firewall
+      ansible.builtin.import_role:
+        name: firewall
+      tags: firewall
+
+    - name: Flush firewall handlers
+      ansible.builtin.meta: flush_handlers
+      tags: always
+
+    - name: Configure management VLAN networking
+      ansible.builtin.import_role:
+        name: management_network
+      tags: management_network
+
+    - name: Flush management network handlers
+      ansible.builtin.meta: flush_handlers
+      tags: always
+
+    - name: Update packages
+      ansible.builtin.import_tasks: tasks/update.yml
+      tags: update

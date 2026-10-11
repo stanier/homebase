@@ -1,19 +1,5 @@
 ---
-# Assumes EPEL is already enabled on RedHat-family hosts
-# (plays/system/baseline_packages.yml -> role common -> enable_epel.yml, which
-# every host already runs) -- this role doesn't declare that as a meta
-# dependency since every other role here assumes the same baseline
-# rather than re-running it itself. Debian-family hosts need nothing
-# extra; their own repos carry it natively.
-#
-# Same package upstream (Debian Go Packaging Team's build is what EPEL
-# rebuilds from), same systemd unit name and /etc/default env file on
-# both -- only the package name itself differs by distro family.
-
 - name: Ensure node_exporter package matches enabled state
-  # Both packages' postrm/%preun scriptlets stop and disable the
-  # service on removal, so there's nothing else to tear down here when
-  # disabled.
   ansible.builtin.package:
     name: "{{ 'node-exporter' if ansible_facts['os_family'] == 'RedHat' else 'prometheus-node-exporter' }}"
     state: "{{ 'present' if node_exporter_enabled else 'absent' }}"
@@ -38,20 +24,10 @@
   when: node_exporter_enabled
 
 - name: Allow metrics1 to scrape node_exporter through firewalld
-  # vmagent scrapes each host's ansible_host, i.e. its management IP, so
-  # the connection arrives on the management interface -- which
-  # roles/management_network moves into its own zone (default
-  # "internal") on firewalled hosts. roles/firewall's firewall_rules
-  # only ever land in firewall_zone ("public"), so a rule there would
-  # never match this traffic; firewalld's default reject is what shows
-  # up in vmagent as "no route to host". Open the port in whichever zone
-  # the scrape actually arrives in, scoped to the scraper alone.
-  ansible.posix.firewalld:
-    rich_rule: "rule family=ipv4 source address={{ node_exporter_scrape_from }} port port={{ node_exporter_port }} protocol=tcp accept"
-    zone: "{{ (management_firewalld_zone | default('internal')) if (management_network_enabled | default(false)) else (firewall_zone | default('public')) }}"
-    permanent: true
-    immediate: true
-    state: "{{ 'enabled' if node_exporter_enabled else 'disabled' }}"
-  when:
-    - firewall_enabled | default(false)
-    - node_exporter_scrape_from | length > 0
+  ansible.builtin.include_role:
+    name: firewall
+    tasks_from: scrape_port
+  vars:
+    firewall_scrape_port: "{{ node_exporter_port }}"
+    firewall_scrape_from: "{{ node_exporter_scrape_from }}"
+    firewall_scrape_enabled: "{{ node_exporter_enabled }}"

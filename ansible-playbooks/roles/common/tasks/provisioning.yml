@@ -1,11 +1,10 @@
 ---
-- block:
-  - import_tasks: dnf_tuning.yml
-  - import_tasks: trim_base_packages.yml
-  - import_tasks: set_hostname.yml
-  - import_tasks: set_root_password.yml
-  - import_tasks: provision_automation_user.yml
-  - import_tasks: security_packages.yml
-  - import_tasks: enable_epel.yml
-  - import_tasks: version_control.yml
-  tags: provisioning
+- import_tasks: dnf_tuning.yml
+- import_tasks: trim_base_packages.yml
+- import_tasks: set_hostname.yml
+- import_tasks: set_root_password.yml
+- import_tasks: provision_automation_user.yml
+- import_tasks: base_packages.yml
+# After base_packages, so epel-release has laid down epel.repo to rewrite.
+- import_tasks: package_mirror.yml
+  when: package_mirror_enabled | bool

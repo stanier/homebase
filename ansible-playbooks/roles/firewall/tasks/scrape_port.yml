@@ -1,0 +1,11 @@
+---
+- name: "Allow the scraper to reach port {{ firewall_scrape_port }}"
+  ansible.posix.firewalld:
+    rich_rule: "rule family=ipv4 source address={{ firewall_scrape_from }} port port={{ firewall_scrape_port }} protocol=tcp accept"
+    zone: "{{ (management_firewalld_zone | default('internal')) if (management_network_enabled | default(false)) else (firewall_zone | default('public')) }}"
+    permanent: true
+    immediate: true
+    state: "{{ 'enabled' if firewall_scrape_enabled | bool else 'disabled' }}"
+  when:
+    - firewall_enabled | default(false)
+    - firewall_scrape_from | length > 0

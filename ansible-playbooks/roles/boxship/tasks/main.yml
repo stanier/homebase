@@ -1,15 +1,6 @@
 ---
-- name: Install security packages
-  ansible.builtin.include_tasks: security_packages.yml
-  tags:
-    - provision
-    - onboard
-
 - name: Install podman for detected package manager
   ansible.builtin.include_tasks: install_podman.yml
-  tags:
-    - provision
-    - onboard
 
 - name: Disable linger for containers user before modifying account
   ansible.builtin.command: "loginctl disable-linger {{ containers_user }}"
@@ -72,3 +63,14 @@
   ansible.builtin.command: "loginctl enable-linger {{ containers_user }}"
   args:
     creates: "/var/lib/systemd/linger/{{ containers_user }}"
+
+- name: Ensure containers user's .ssh directory exists
+  ansible.builtin.file:
+    path: "{{ containers_home }}/.ssh"
+    state: directory
+    owner: "{{ containers_user }}"
+    group: "{{ containers_user }}"
+    mode: "0700"
+
+- name: Compute containers user's XDG_RUNTIME_DIR
+  ansible.builtin.include_tasks: runtime_dir.yml

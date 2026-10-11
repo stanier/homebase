@@ -3,7 +3,7 @@
 Ansible plays and roles for the homelab fleet: onboarding hosts, keeping
 them updated, and deploying everything that isn't containerized (plus the
 Ansible side of everything that is — see `../container-files`). VM
-*creation* itself now goes through `../proxmox-tofu`; this repo covers
+*creation* itself goes through `../proxmox-tofu`; this repo covers
 everything before and after that.
 
 Two environments live in `inventory/` (gitignored — see below):
@@ -32,24 +32,20 @@ following the conventions described in `docs/`.
 
 | Role | Purpose |
 |---|---|
-| `common` | Baseline every host gets: root password, `automation` service account, root CA trust |
-| `boxship` | Shared provisioning base most other roles depend on |
-| `hypervisor` | Proxmox: golden template builds, legacy (non-Tofu) VM create/delete, snapshots, repo hygiene |
-| `management_network` | Brings up the mgmt VLAN interface/routing on a VM |
-| `firewall` | Host firewall rules |
-| `containerapps` | Syncs `../container-files` onto `[containers]` hosts and runs it as systemd Quadlet units |
-| `appdeploy` / `appdeploy_caddy` | Forced-command CI deploy key + Gitea Actions wiring for app repos; Caddy vhost generation for deployed apps |
-| `backup` | Daily restic backups of container volumes/bind-mounts, per host |
-| `mail_server` / `postfix` | Native (non-containerized) mail stack, pairs with `container-files/dovecot` + `roundcube` |
-| `freeipa` | Native (non-containerized) FreeIPA install -- directory/Kerberos source of truth, DNS deliberately left to AdGuardHome/bind |
-| `freeipa_client` | Enrolls a `[vm]` host as a FreeIPA/SSSD client for IPA-backed interactive SSH login |
-| `logging` | Central logging setup |
-| `auditd` | Kernel-level audit trail (identity/auth/sudo/sshd config watches) via `auditd` |
-| `wazuh_agent` | Installs and enrolls the Wazuh HIDS agent (`../container-files/wazuh` is the manager side) |
-| `node_exporter` / `podman_exporter` | Prometheus exporters for non-container-managed hosts |
-| `tailscale` | Tailscale enrollment |
-| `ssh_config` | Generates `~/.ssh/config.d/homebase-<env>.conf` Host entries from inventory (operator's machine, not fleet infra) |
-| `workstation` | Personal workstation provisioning (not fleet infra) |
+| `common` | Baseline for every host: hostname, root password, `automation` account, base packages, package mirror client (dnf baseurls / apt proxy hook, when `package_mirror_url` is set), root CA trust, internal DNS; also package updates |
+| `boxship` | The rootless-podman `containers` user every container role builds on |
+| `containerapps` | Syncs `container-files` onto `[containers]` hosts and runs it as Quadlet units |
+| `appdeploy` / `appdeploy_caddy` | CI deploys of app repos to app-host, and their Caddy routes |
+| `hypervisor` | Proxmox: golden templates, snapshots, reboots, node upkeep |
+| `management_network` | Moves sshd and firewalld onto a VM's management NIC |
+| `firewall` | firewalld rules |
+| `freeipa` / `freeipa_client` | Native FreeIPA server; SSSD enrollment for IPA-backed SSH logins |
+| `mail_server` / `postfix` | Receiving MTA on mail1 (with the dovecot/roundcube containers); relay satellites everywhere else |
+| `logging` / `auditd` / `wazuh_agent` | Remote syslog, audit rules, Wazuh agent enrollment |
+| `node_exporter` / `podman_exporter` | Prometheus exporters scraped by metrics1 |
+| `ssh_config` | Writes `~/.ssh/config.d/homebase-<env>.conf` on the operator's machine |
+| `backup` | Restic backups of container volumes -- not wired into any play yet |
+| `workstation` | Empty placeholder |
 
 ## Running things
 
@@ -66,10 +62,9 @@ prompt covering all of it:
 ./testrun.sh
 ```
 
-(`testrun.sh` targets `dangerzone` against a fixed host list and passes
-`containerapps_source=local` so it deploys from a local
-`container-files` checkout instead of pulling from Gitea — see the
-script itself.)
+(`testrun.sh` targets `dangerzone` with a fixed host list; pass `--clean`
+to destroy and recreate the VMs first. Extra arguments go to
+`ansible-playbook`, e.g. `--tags podman`.)
 
 ## Docs
 
@@ -79,21 +74,17 @@ same pattern as `homebase`'s docs site) at
 `docs.apps.testzone.internal/ansible-playbooks/`. Start here before
 digging into role source:
 
-- [`docs/Typical_Procedure.md`](docs/Typical_Procedure.md) — creating a
-  new VM (Tofu-first, with the legacy Ansible-only path as fallback), VM
-  maintenance/snapshots, restoring a container host after a wipe, moving
-  FreeIPA users between environments/sites, FreeIPA-backed personal SSH
-  access.
+- [`docs/Typical_Procedure.md`](docs/Typical_Procedure.md) — play order
+  for a new environment, golden templates, new VMs, VM maintenance,
+  FreeIPA user moves and FreeIPA-backed SSH access.
 - [`docs/VAULT.md`](docs/VAULT.md) — Ansible Vault conventions, every
   secret in the fleet and where it's consumed, the `automation` service
   account.
-- [`docs/PACKAGE_MANAGEMENT.md`](docs/PACKAGE_MANAGEMENT.md) — package
-  manager coverage status for the update plays.
 - [`docs/GITEA_ACTIONS.md`](docs/GITEA_ACTIONS.md) — gitea-runner
   (DNS/SELinux gotchas), appdeploy CI setup and debugging, and
   referencing private action repos from a workflow.
 
 See also [`../proxmox-tofu/README.md`](../proxmox-tofu/README.md) for VM
-lifecycle (the supported default for both environments) and
+lifecycle and
 [`../container-files/README.md`](../container-files/README.md) for what
 actually gets deployed by `roles/containerapps`.

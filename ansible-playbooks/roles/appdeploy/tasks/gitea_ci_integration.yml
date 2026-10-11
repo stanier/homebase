@@ -1,29 +1,13 @@
 ---
-# Pushes the shared appdeploy CI keypair and app-host's address into
-# Gitea's *user*-level Actions secrets/variables (not per-repo, not
-# per-org) -- every app repo lives under the single 'keyton' namespace
-# (see containerapps_repo), and Gitea inherits user-level Actions
-# secrets/variables into every repo that user owns, so a new app repo's
-# workflow can reference ${{ secrets.SSH_PRIVATE_KEY }} and
-# ${{ vars.DEPLOY_HOST }} with no manual per-repo Gitea configuration --
-# only "enable Actions" on that repo remains a manual, one-time toggle.
-#
-# Delegated to the gitea host itself and called over plain HTTP against
-# its own published port -- see appdeploy_gitea_api_base's own comment.
-# gitea_ci_api_token needs write access to user-level Actions
-# secrets/variables; see docs/VAULT.md for how to create one.
+# Sets SSH_PRIVATE_KEY and DEPLOY_HOST as user-level Actions secret and
+# variable, which Gitea inherits into every repo that user owns -- a new
+# app repo only needs Actions enabled. gitea_ci_api_token needs write
+# access to those; see docs/VAULT.md.
 
 - name: Push the appdeploy CI private key into Gitea as a user-level Actions secret
-  # Secrets are write-only in Gitea's API (no GET to diff against), and
-  # this single PUT creates-or-updates -- so this always reports changed,
-  # same as any other secret push in this fleet (see containerapps'
-  # gitea-runner .env writes, which have the same property). Pushed as
-  # base64, not the raw multiline key -- ci-actions' deploy-to-apphost
-  # composite action expects base64 (its own comment explains why: a
-  # raw PEM/OpenSSH key round-tripped through a secrets field is prone
-  # to having its trailing newline stripped or line endings normalized,
-  # which is enough to corrupt it) and does its own base64 -d, so the
-  # value landing in SSH_PRIVATE_KEY has to already be encoded to match.
+  # Secrets are write-only, so this always PUTs. Base64 because a raw key
+  # loses its trailing newline in a secrets field; ci-actions'
+  # deploy-to-apphost decodes it.
   ansible.builtin.uri:
     url: "{{ appdeploy_gitea_api_base }}/user/actions/secrets/SSH_PRIVATE_KEY"
     method: PUT
@@ -38,9 +22,7 @@
   run_once: true
 
 - name: Check whether Gitea already has a DEPLOY_HOST user-level Actions variable
-  # Unlike secrets, variables are readable, and Gitea's variables API
-  # splits create (POST) from update (PUT) instead of one create-or-update
-  # call -- so this decides which of those two to use below.
+  # Gitea's variables API splits create (POST) from update (PUT).
   ansible.builtin.uri:
     url: "{{ appdeploy_gitea_api_base }}/user/actions/variables/DEPLOY_HOST"
     method: GET
@@ -59,15 +41,7 @@
       Authorization: "token {{ gitea_ci_api_token }}"
     body_format: json
     body:
-      # ansible_host (management network), not app_ip -- this is the
-      # address a CI job container SSHes into to reach deploy.sh, a
-      # control-plane action same as Ansible's own connection to this
-      # host, not application data-plane traffic. Confirmed reachable
-      # from gitea-runner-1's job containers this way; app_ip is not
-      # directly reachable from outside the app-host/app-proxy pair's
-      # own subnet (verified the hard way -- see appdeploy/tasks/main.yml's
-      # host-key-scan task, which needs the same management-VLAN jump
-      # host for exactly this reason).
+      # Management address: app_ip isn't reachable from the runner.
       value: "{{ hostvars['app-host'].ansible_host }}"
     status_code: [201]
   delegate_to: gitea

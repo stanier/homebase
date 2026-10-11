@@ -34,11 +34,9 @@ graph LR
   D -.->|deploy-to-apphost| E["docs sites + apps<br/>served behind Caddy"]
 ```
 
-1. **`proxmox-tofu`** clones a VM from a golden template and boots it —
-   the supported default for both environments now (a legacy
-   Ansible-native path still exists as a fallback).
-2. **`ansible-playbooks`** takes it from there: management network,
-   baseline packages/accounts, logging, and — for hosts in the
+1. **`proxmox-tofu`** clones a VM from a golden template and boots it.
+2. **`ansible-playbooks`** takes it from there: DNS, baseline
+   packages/accounts, logging, and — for hosts in the
    `[containers]` group — syncing and running `container-files` as
    systemd Quadlet units via `roles/containerapps`.
 3. **`container-files`** has no deploy logic of its own; it's the

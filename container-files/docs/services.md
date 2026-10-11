@@ -6,7 +6,7 @@
 | `caddy-l4` | Same as `caddy`, plus a custom `xcaddy` build (`caddy-l4`) that adds layer4 SSH-over-HTTPS routing for appdeploy'd SSH apps — only needed on the fleet's edge proxy (`app-proxy`); everywhere else runs plain `caddy` |
 | `dns` (BIND) | Authoritative DNS, RFC2136 dynamic updates for ACME DNS-01 |
 | `adguardhome` | Recursive DNS + ad/tracker blocking; also the resolver every VM's app-network DNS points at |
-| `alertmanager` | Alert routing/notification (pairs with `victoriametrics`/`grafana`) |
+| `alerting` | `vmalert` (evaluates the rules in `data/rules/` against `victoriametrics`) → `alertmanager` (routing, grouping, silences) → `matrix-alertmanager-receiver` (posts to a Matrix room on `matrix`) |
 | `authentik` | SSO / identity provider (server + worker + Postgres + Redis) |
 | `gitea` | Git hosting |
 | `gitea-runner` | Gitea Actions CI runner (`act_runner`) |

@@ -1,33 +1,4 @@
 ---
-# Builds/refreshes every entry in proxmox_templates on this Proxmox node.
-# Run via plays/vm/build_templates_pve.yml --tags templates -- when a new
-# OS is added to proxmox_templates, or with -e proxmox_template_rebuild=true
-# to rebuild every existing template from a fresh upstream image (worth
-# doing every week or two: build_template.yml bakes a full package
-# upgrade in, and the older the template, the longer every fresh
-# clone's first update_packages run takes).
-#
-# The existence check below looks at the "template" flag, not just
-# whether the vmid is present -- every task in build_template.yml is
-# idempotent (state: present throughout, and its final "convert to
-# template" step already no-ops if template is already set), so a vmid
-# that exists but was never finished (e.g. a prior run died partway
-# through disk import) gets its remaining steps re-run and repaired here
-# rather than being mistaken for a completed template and skipped
-# forever. proxmox_template_rebuild=true deletes each completed template
-# on this node first (below) so it's rebuilt from scratch -- safe for
-# existing VMs, since modules/proxmox_vm and legacy_create_vm.yml both
-# make full clones, not linked ones.
-#
-# Every proxmox_kvm/proxmox_disk/proxmox_vm_info task (here and in
-# build_template.yml) is delegated to localhost -- those just make HTTP
-# calls to the API, so they run from the control node, not from the
-# Proxmox host itself, and need become: false to override this play's
-# become: true (needed for the actual on-node tasks in build_template.yml)
-# -- otherwise this tries to sudo on the control machine itself for a
-# plain HTTP call, which has no passwordless account set up for it the
-# way turkey/homelab's automation user does, and fails demanding a
-# password.
 - name: Check whether each template already exists and is complete
   community.proxmox.proxmox_vm_info:
     type: qemu
@@ -43,28 +14,12 @@
   delegate_to: localhost
   become: false
   vars:
-    # ansible_playbook_python is the interpreter actually running
-    # ansible-playbook itself, which isn't necessarily the one with
-    # proxmoxer installed -- e.g. a system-wide ansible-core install
-    # alongside a per-operator venv used only for extra libraries.
-    # $VIRTUAL_ENV (set by the shell on `source venv/bin/activate`) is
-    # inherited by the ansible-playbook process regardless of which
-    # Python actually runs it, so prefer that when present.
-    ansible_python_interpreter: >-
-      {{ (lookup('env', 'VIRTUAL_ENV') ~ '/bin/python3')
-         if lookup('env', 'VIRTUAL_ENV')
-         else ansible_playbook_python }}
+    ansible_python_interpreter: "{{ proxmox_controller_python }}"
   loop: "{{ proxmox_templates | dict2items }}"
   loop_control:
     label: "{{ item.key }}"
   register: proxmox_template_check
 
-# A block can't be looped directly (Ansible has no "loop a block"
-# support), so each missing/incomplete template's build steps live in
-# their own task file instead, included once per template that needs it.
-# Only ever a completed template on this node -- never a non-template
-# VM that happens to hold the vmid (that's left to the build step's own
-# repair logic, as before) and never another node's.
 - name: Delete each completed template for a from-scratch rebuild
   community.proxmox.proxmox_kvm:
     node: "{{ inventory_hostname }}"
@@ -81,10 +36,7 @@
   delegate_to: localhost
   become: false
   vars:
-    ansible_python_interpreter: >-
-      {{ (lookup('env', 'VIRTUAL_ENV') ~ '/bin/python3')
-         if lookup('env', 'VIRTUAL_ENV')
-         else ansible_playbook_python }}
+    ansible_python_interpreter: "{{ proxmox_controller_python }}"
   when:
     - proxmox_template_rebuild | bool
     - item.proxmox_vms | length > 0

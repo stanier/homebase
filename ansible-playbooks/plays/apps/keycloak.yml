@@ -1,0 +1,184 @@
+---
+
+- name: Configure Keycloak's FreeIPA federation and OIDC clients
+  hosts: keycloak
+  become: false
+  gather_facts: false
+
+  module_defaults:
+    group/community.general.keycloak:
+      auth_keycloak_url: http://127.0.0.1:8080
+      auth_realm: master
+      auth_username: admin
+      auth_password: "{{ keycloak_bootstrap_password }}"
+      realm: master
+
+  vars:
+    keycloak_oidc_clients:
+      - client_id: vaultwarden
+        name: Vaultwarden
+        secret_var: keycloak_vaultwarden_client_secret
+        redirect_uri: "https://vaultwarden.{{ base_domain }}/identity/connect/oidc-signin"
+        origin: "https://vaultwarden.{{ base_domain }}"
+      - client_id: synapse
+        name: Matrix (Synapse)
+        secret_var: keycloak_synapse_client_secret
+        redirect_uri: "https://chat.{{ base_domain }}/_synapse/client/oidc/callback"
+        origin: "https://chat.{{ base_domain }}"
+        frontchannel_logout: false
+      # meshcore1's oauth2-proxy, in front of the MeshCore traffic web
+      # UI (container-files/meshcore). The audience mapper puts the
+      # client ID in the tokens' aud, which oauth2-proxy's keycloak-oidc
+      # provider checks. The groups mapper puts the user's FreeIPA groups
+      # (plain names, from the federation's groups mapper) in a "groups"
+      # claim; the UI lets fleet-admins change settings.
+      - client_id: meshcore-webui
+        name: MeshCore traffic
+        secret_var: keycloak_meshcore_webui_client_secret
+        redirect_uri: "https://mesh.{{ base_domain }}/oauth2/callback"
+        origin: "https://mesh.{{ base_domain }}"
+        protocol_mappers:
+          - name: meshcore-webui-audience
+            protocol: openid-connect
+            protocolMapper: oidc-audience-mapper
+            config:
+              included.client.audience: meshcore-webui
+              id.token.claim: "true"
+              access.token.claim: "true"
+          - name: meshcore-webui-groups
+            protocol: openid-connect
+            protocolMapper: oidc-group-membership-mapper
+            config:
+              claim.name: groups
+              full.path: "false"
+              id.token.claim: "true"
+              access.token.claim: "true"
+              userinfo.token.claim: "true"
+
+  tasks:
+    - name: Wait for Keycloak's API to be ready
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8080/realms/master
+        status_code: 200
+      register: keycloak_ready
+      until: keycloak_ready.status | default(0) == 200
+      retries: 30
+      delay: 5
+
+    - name: Add/update the FreeIPA LDAP user federation provider
+      community.general.keycloak_user_federation:
+        name: freeipa
+        state: present
+        provider_id: ldap
+        provider_type: org.keycloak.storage.UserStorageProvider
+        config:
+          priority: 0
+          enabled: true
+          cachePolicy: DEFAULT
+          editMode: READ_ONLY
+          importEnabled: true
+          syncRegistrations: false
+          vendor: other
+          usernameLDAPAttribute: uid
+          rdnLDAPAttribute: uid
+          uuidLDAPAttribute: ipaUniqueID
+          userObjectClasses: "inetOrgPerson, organizationalPerson"
+          customUserSearchFilter: "(!(uid=svc-*))"
+          connectionUrl: "ldaps://freeipa.{{ base_domain }}:636"
+          usersDn: "cn=users,cn=accounts,{{ freeipa_basedn }}"
+          authType: simple
+          bindDn: "uid=svc-keycloak-bind,cn=users,cn=accounts,{{ freeipa_basedn }}"
+          bindCredential: "{{ freeipa_keycloak_bind_password }}"
+          searchScope: 1
+          validatePasswordPolicy: false
+          trustEmail: true
+          useTruststoreSpi: ldapsOnly
+          connectionPooling: true
+          pagination: true
+        mappers:
+          - name: username
+            providerId: user-attribute-ldap-mapper
+            providerType: org.keycloak.storage.ldap.mappers.LDAPStorageMapper
+            config:
+              ldap.attribute: uid
+              user.model.attribute: username
+              read.only: true
+              is.mandatory.in.ldap: true
+          - name: first name
+            providerId: user-attribute-ldap-mapper
+            providerType: org.keycloak.storage.ldap.mappers.LDAPStorageMapper
+            config:
+              ldap.attribute: givenName
+              user.model.attribute: firstName
+              read.only: true
+              is.mandatory.in.ldap: false
+          - name: last name
+            providerId: user-attribute-ldap-mapper
+            providerType: org.keycloak.storage.ldap.mappers.LDAPStorageMapper
+            config:
+              ldap.attribute: sn
+              user.model.attribute: lastName
+              read.only: true
+              is.mandatory.in.ldap: false
+          - name: email
+            providerId: user-attribute-ldap-mapper
+            providerType: org.keycloak.storage.ldap.mappers.LDAPStorageMapper
+            config:
+              ldap.attribute: mail
+              user.model.attribute: email
+              read.only: true
+              is.mandatory.in.ldap: false
+          # FreeIPA groups as Keycloak groups, read-only, so clients
+          # with a groups mapper (meshcore-webui) see them. Only direct
+          # memberships: IPA's nested groups aren't followed.
+          - name: groups
+            providerId: group-ldap-mapper
+            providerType: org.keycloak.storage.ldap.mappers.LDAPStorageMapper
+            config:
+              groups.dn: "cn=groups,cn=accounts,{{ freeipa_basedn }}"
+              group.name.ldap.attribute: cn
+              group.object.classes: groupOfNames
+              preserve.group.inheritance: false
+              ignore.missing.groups: false
+              membership.ldap.attribute: member
+              membership.attribute.type: DN
+              membership.user.ldap.attribute: uid
+              mode: READ_ONLY
+              user.roles.retrieve.strategy: LOAD_GROUPS_BY_MEMBER_ATTRIBUTE
+              memberof.ldap.attribute: memberOf
+              drop.non.existing.groups.during.sync: false
+              groups.path: /
+      register: keycloak_federation_result
+      until: keycloak_federation_result is succeeded
+      retries: 3
+      delay: 10
+      no_log: true
+
+    - name: Add/update OIDC clients
+      community.general.keycloak_client:
+        client_id: "{{ item.client_id }}"
+        name: "{{ item.name }}"
+        state: present
+        enabled: true
+        public_client: false
+        protocol: openid-connect
+        standard_flow_enabled: true
+        direct_access_grants_enabled: false
+        implicit_flow_enabled: false
+        service_accounts_enabled: false
+        frontchannel_logout: "{{ item.frontchannel_logout | default(omit) }}"
+        protocol_mappers: "{{ item.protocol_mappers | default(omit) }}"
+        secret: "{{ lookup('vars', item.secret_var) }}"
+        redirect_uris:
+          - "{{ item.redirect_uri }}"
+        web_origins:
+          - "{{ item.origin }}"
+      loop: "{{ keycloak_oidc_clients }}"
+      loop_control:
+        label: "{{ item.client_id }}"
+      when: lookup('vars', item.secret_var, default='') | length > 0
+      register: keycloak_client_result
+      until: keycloak_client_result is succeeded
+      retries: 3
+      delay: 10
+      no_log: true

@@ -1,0 +1,28 @@
+[Unit]
+Description=vmalert
+After=network-online.target alertmanager.service
+Wants=network-online.target alertmanager.service
+
+[Container]
+Image=docker.io/victoriametrics/vmalert:v1.150.0
+# Host network, same as vmagent: VictoriaMetrics and Alertmanager are
+# both published on this host, and loopback reaches them without the
+# rootless-Podman detour a bridge network would need to get back to its
+# own host.
+Network=host
+Volume=/srv/containers/container-files/alerting/data/rules:/etc/vmalert/rules:ro,z
+# remoteWrite/remoteRead persist alert state (the ALERTS_FOR_STATE
+# series) to VictoriaMetrics, so a restart doesn't reset every `for:`
+# timer back to zero.
+Exec=-rule=/etc/vmalert/rules/*.yml -datasource.url=http://127.0.0.1:8428 -remoteWrite.url=http://127.0.0.1:8428 -remoteRead.url=http://127.0.0.1:8428 -notifier.url=http://127.0.0.1:9093 -evaluationInterval=30s -httpListenAddr=127.0.0.1:8880
+HealthCmd=wget -q --spider http://127.0.0.1:8880/health
+HealthInterval=30s
+HealthTimeout=5s
+HealthStartPeriod=15s
+HealthRetries=3
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

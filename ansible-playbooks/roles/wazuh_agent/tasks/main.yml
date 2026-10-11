@@ -1,8 +1,4 @@
 ---
-# No hosted .repo file to get_url the way roles/tailscale does --
-# Wazuh's packages.wazuh.com only serves the raw repo path, not a
-# ready-made .repo file -- so this is the one role in this repo using
-# ansible.builtin.rpm_key/yum_repository directly instead.
 - name: Import Wazuh GPG key
   ansible.builtin.rpm_key:
     key: https://packages.wazuh.com/key/GPG-KEY-WAZUH
@@ -21,18 +17,6 @@
     - wazuh_agent_enabled
     - ansible_facts['os_family'] == 'RedHat'
 
-# The RPM's %post script is *supposed* to do the actual enrollment
-# against authd (port 1515) using these env vars, the same way
-# roles/tailscale's install-then-join would -- but on RHEL9+/Rocky9+/
-# Fedora, dnf5 runs package-transaction scriptlets through a separate
-# daemon process that does not inherit this task's `environment:`, so
-# %post sees none of these and both enrollment and the manager address
-# in ossec.conf silently no-op (confirmed: ossec.conf ships the literal
-# 'MANAGER_IP' placeholder unreplaced, and wazuh-agent then refuses to
-# start with "Invalid server address found: 'MANAGER_IP'"). Kept here
-# anyway since it's harmless and works fine on any host still using
-# classic dnf/yum -- the explicit tasks below are what actually make
-# this reliable everywhere.
 - name: Install wazuh-agent
   ansible.builtin.package:
     name: wazuh-agent
@@ -58,10 +42,6 @@
   register: wazuh_agent_client_keys
   when: wazuh_agent_enabled
 
-# agent-auth is idempotent to run once (it always requests a fresh key),
-# so this is gated on client.keys being empty/missing rather than
-# skipped outright -- a host that lost its enrollment (e.g. a fresh
-# manager rebuild) re-enrolls on the next run instead of staying broken.
 - name: Enroll with Wazuh authd
   ansible.builtin.command:
     argv:
@@ -76,14 +56,6 @@
     - wazuh_agent_enabled
     - not wazuh_agent_client_keys.stat.exists or wazuh_agent_client_keys.stat.size == 0
 
-# Present in neither the RPM nor the container image's default
-# ossec.conf (confirmed by extracting wazuh/wazuh-agent:4.14.7's own
-# copy -- no audit stanza at all, commented or otherwise), so this
-# appends a block rather than uncommenting one. Wazuh's XML parser
-# accepts multiple concatenated <ossec_config> roots in one file (the
-# manager's own stock ossec.conf ends the same way, for its
-# active-response logging) -- appending is enough, no need to touch or
-# understand the rest of the file.
 - name: Enable audit-log monitoring (feeds roles/auditd's output into Wazuh)
   ansible.builtin.blockinfile:
     path: /var/ossec/etc/ossec.conf
@@ -106,10 +78,6 @@
     enabled: true
   when: wazuh_agent_enabled
 
-# Teardown mirrors roles/logging/roles/auditd: leave the package
-# installed (removing it doesn't un-enroll it from the manager anyway,
-# and reinstalling later would just re-run the same idempotent enroll
-# step), just stop the service and drop the audit-log stanza.
 - name: Check whether wazuh-agent was ever installed
   ansible.builtin.stat:
     path: /var/ossec/etc/ossec.conf

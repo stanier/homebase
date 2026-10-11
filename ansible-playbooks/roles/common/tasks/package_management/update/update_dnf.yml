@@ -1,9 +1,0 @@
----
-- name: Update dnf packages
-  ansible.builtin.dnf:
-    name: "*"
-    state: latest
-    # Mirrors sometimes sync AppStream ahead of BaseOS, leaving a newer
-    # package whose deps aren't published yet; take the best installable
-    # candidate instead of failing the run.
-    nobest: true

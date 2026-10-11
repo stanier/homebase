@@ -9,7 +9,7 @@ up; this page just tracks status until then.
 |---|---|---|
 | [Uptime Kuma](https://github.com/louislam/uptime-kuma) | External-facing uptime/status monitoring, complementing Grafana's internal metrics view | Added — see `uptime-kuma/` |
 | [MinIO](https://min.io/) | Self-hosted S3-compatible object storage, for backups/exports that currently go straight to external S3 | Added — see `minio/` |
-| [Alertmanager](https://prometheus.io/docs/alerting/latest/alertmanager/) | Alert routing/notification, pairing with `victoriametrics` (needs a rule evaluator — `vmalert` or Grafana alerting — pointed at it; out of scope for this pass) | Added — see `alertmanager/` |
+| [Alertmanager](https://prometheus.io/docs/alerting/latest/alertmanager/) | Alert routing/notification, pairing with `victoriametrics` | Added — see `alerting/`, alongside `vmalert` and a Matrix receiver |
 | [Vaultwarden](https://github.com/dani-garcia/vaultwarden) | Self-hosted Bitwarden-compatible password manager | Added — see `vaultwarden/` |
 | [Trivy](https://github.com/aquasecurity/trivy) | Vulnerability/SBOM scanning, run in server mode so `gitea-runner` CI doesn't re-pull the DB every job | Added — see `trivy/` |
 | [WireGuard](https://www.wireguard.com/) (`wg-easy`) | VPN entry point for remote access, complementing the FreeIPA-backed personal SSH/sudo access | Added — see `wireguard/` |
@@ -23,9 +23,6 @@ up; this page just tracks status until then.
   if that changes (e.g. a future Loki/VictoriaMetrics S3 backend on the
   same host). Its upstream image is also mid-migration off free Docker
   Hub pushes — see the comment in `minio/minio.container`.
-- **Alertmanager** — needs `data/alertmanager.yml` for routing config
-  and receiver secrets (webhook URLs, SMTP creds) templated in via
-  Ansible, same as other services' `.env` files.
 - **Vaultwarden** — shipped with `SIGNUPS_ALLOWED=false` and default
   SQLite (fine at homelab scale, no Postgres sidecar). `DOMAIN` and
   `ADMIN_TOKEN` go in the Ansible-templated `.env`; use the `/admin`
@@ -86,14 +83,12 @@ account/`WG_HOST` get set on first login instead, at
 gets `51820/udp` to that host from the real internet is still outside
 what either repo can express.
 
-Uptime Kuma, Alertmanager, and Vaultwarden are now wired into
-`container-sandbox`'s `containerapps_quadlet_services`, sharing that
-host with `code-server`/`caddy` rather than getting dedicated hosts —
-each also picked up a `uptime-kuma`/`alertmanager`/`vaultwarden.{{
-base_domain }}` Caddy route in the same host's Caddyfile. Alertmanager's
-`data/alertmanager.yml` is still a placeholder (`route.receiver` points
-at a no-op receiver) — no real webhook/SMTP receiver config exists yet.
-Vaultwarden's `ADMIN_TOKEN` needs `vault_vaultwarden_admin_token` added
+Vaultwarden is wired into `container-sandbox`'s
+`containerapps_quadlet_services`, sharing that host with
+`code-server`/`caddy`. Uptime Kuma was once too, but isn't deployed
+anywhere now (its `uptime-kuma` CNAME is left over). Alertmanager moved
+to metrics1 as part of `alerting/` (vmalert → Alertmanager → Matrix);
+see the root repo's `docs/observability.md`. Vaultwarden's `ADMIN_TOKEN` needs `vault_vaultwarden_admin_token` added
 to `group_vars/all/vault.yml` by hand, same blocker as Trivy's token
 below — its container won't actually come up without it.
 

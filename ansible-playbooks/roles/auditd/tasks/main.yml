@@ -23,10 +23,6 @@
   when: auditd_enabled
 
 - name: Remove baseline audit rules when disabled
-  # Leaves the audit package installed -- removing it on RHEL-family
-  # hosts is often blocked/inadvisable (it's frequently a dependency of
-  # other security tooling); disabling the service is the safe "off"
-  # state, same pattern as roles/logging's teardown.
   ansible.builtin.file:
     path: /etc/audit/rules.d/homebase.rules
     state: absent

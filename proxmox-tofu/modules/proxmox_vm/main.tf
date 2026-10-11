@@ -90,6 +90,16 @@ resource "proxmox_virtual_environment_vm" "this" {
     type = var.vga_type
   }
 
+  # USB passthrough by Proxmox resource mapping (Datacenter → Resource
+  # Mappings → USB), not raw vendor:product IDs: a mapping can be used
+  # with an API token, while raw host devices need root@pam itself.
+  dynamic "usb" {
+    for_each = var.usb_mappings
+    content {
+      mapping = usb.value
+    }
+  }
+
   initialization {
     datastore_id = var.storage
 

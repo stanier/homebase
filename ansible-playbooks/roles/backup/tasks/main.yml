@@ -1,20 +1,9 @@
 ---
-# Backs up every volume/bind-mount of every quadlet service containerapps
-# has actually deployed on this host (see templates/backup.sh.j2 for why
-# it reads that directory instead of taking its own service list), on a
-# daily systemd --user timer, into a per-host restic repo -- see
-# backup_repository's own comment in defaults/main.yml for why per-host.
-
-- name: Look up the containers user's uid
-  ansible.builtin.getent:
-    database: passwd
-    key: "{{ containers_user }}"
-
-- name: Compute containers user's XDG_RUNTIME_DIR
-  # ansible_facts.getent_passwd, not the bare getent_passwd -- see
-  # roles/containerapps' identical task for why.
-  ansible.builtin.set_fact:
-    backup_xdg_runtime_dir: "/run/user/{{ ansible_facts.getent_passwd[containers_user][1] }}"
+# NOT YET WIRED IN: no play runs this role and backup_repository is
+# still a placeholder in both environments.
+#
+# Daily restic backup (systemd --user timer) of every volume/bind-mount
+# of every quadlet service deployed on this host, into a per-host repo.
 
 - name: Ensure backup and systemd user-unit directories exist
   ansible.builtin.file:
@@ -67,7 +56,7 @@
     RESTIC_PASSWORD: "{{ backup_password }}"
     AWS_ACCESS_KEY_ID: "{{ backup_aws_access_key_id }}"
     AWS_SECRET_ACCESS_KEY: "{{ backup_aws_secret_access_key }}"
-    XDG_RUNTIME_DIR: "{{ backup_xdg_runtime_dir }}"
+    XDG_RUNTIME_DIR: "{{ containers_xdg_runtime_dir }}"
   become_user: "{{ containers_user }}"
   register: backup_repo_check
   changed_when: false
@@ -81,7 +70,7 @@
     RESTIC_PASSWORD: "{{ backup_password }}"
     AWS_ACCESS_KEY_ID: "{{ backup_aws_access_key_id }}"
     AWS_SECRET_ACCESS_KEY: "{{ backup_aws_secret_access_key }}"
-    XDG_RUNTIME_DIR: "{{ backup_xdg_runtime_dir }}"
+    XDG_RUNTIME_DIR: "{{ containers_xdg_runtime_dir }}"
   become_user: "{{ containers_user }}"
   when: backup_repo_check.rc != 0
   no_log: true
@@ -92,7 +81,7 @@
     scope: user
   become_user: "{{ containers_user }}"
   environment:
-    XDG_RUNTIME_DIR: "{{ backup_xdg_runtime_dir }}"
+    XDG_RUNTIME_DIR: "{{ containers_xdg_runtime_dir }}"
 
 - name: Enable and start the backup timer
   ansible.builtin.systemd:
@@ -102,4 +91,4 @@
     enabled: true
   become_user: "{{ containers_user }}"
   environment:
-    XDG_RUNTIME_DIR: "{{ backup_xdg_runtime_dir }}"
+    XDG_RUNTIME_DIR: "{{ containers_xdg_runtime_dir }}"

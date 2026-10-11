@@ -1,14 +1,4 @@
 ---
-# Reboots VMs through the Proxmox API one at a time, so pending hardware
-# changes (e.g. the balloon device from proxmox_vm.memory_min) actually
-# apply -- see roles/hypervisor/tasks/reboot.yml for why an in-guest
-# reboot doesn't do that.
-#
-# serial: 1 + hosts.ini's [vm] order means dns, dnsguard and freeipa
-# come back before the hosts that resolve/authenticate through them.
-# Narrow it with -l as usual, e.g.:
-#   ansible-playbook -i inventory/dangerzone --ask-vault-pass plays/vm/reboot_vms.yml
-#   ansible-playbook -i inventory/dangerzone --ask-vault-pass plays/vm/reboot_vms.yml -l metrics1,gitea
 - name: Reboot VMs through Proxmox, one at a time
   hosts: vm
   serial: 1

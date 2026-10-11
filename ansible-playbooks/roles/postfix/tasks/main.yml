@@ -1,10 +1,5 @@
 ---
-# Debian's postfix package pops a debconf dialog on first install
-# ("General mail configuration type", "System mail name") that would
-# otherwise hang a non-interactive ansible run. Preseeding these first
-# makes the subsequent package install silent -- a no-op on hosts that
-# already have postfix installed, since debconf only acts on what a
-# package's postinst script actually asks.
+# Preseed Debian's debconf questions so the install doesn't prompt.
 - name: Preseed postfix debconf selections
   ansible.builtin.debconf:
     name: postfix
@@ -17,7 +12,7 @@
     - { question: postfix/relayhost, vtype: string, value: "{{ postfix_relay_host }}" }
   when:
     - postfix_enabled
-    - ansible_os_family == "Debian"
+    - ansible_facts['os_family'] == "Debian"
 
 - name: Install postfix
   ansible.builtin.package:
@@ -36,11 +31,7 @@
   when: postfix_enabled
 
 - name: Point root's local mail alias at a real recipient
-  # /etc/postfix/root_alias, not the system /etc/aliases -- see
-  # templates/root_alias.j2's own comment. Always written (even empty)
-  # so main.cf's alias_maps always has a valid table to open. No
-  # newaliases step needed either way -- texthash reads straight off
-  # disk, no .db to rebuild.
+  # Always written, even empty, so alias_maps always has a table to open.
   ansible.builtin.template:
     src: root_alias.j2
     dest: /etc/postfix/root_alias

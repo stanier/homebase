@@ -7,11 +7,15 @@ Wants=network-online.target
 Image=docker.gitea.com/gitea:1.26.4-rootless
 Environment=GITEA__repository__ENABLE_PUSH_CREATE_USER=true
 Environment=GITEA__repository__ENABLE_PUSH_CREATE_ORG=true
+# Go loads SSL_CERT_DIR on top of the system bundle, so this adds the
+# FreeIPA CA (for LDAPS) without dropping the public roots.
+Environment=SSL_CERT_DIR=/etc/ssl/freeipa-ca
 PublishPort=3000:3000
 PublishPort=2222:2222
 Volume=/srv/gitea/data:/var/lib/gitea:z
 Volume=/srv/gitea/config:/etc/gitea:z
 Volume=/etc/localtime:/etc/localtime:ro
+Volume=/srv/containers/container-files/gitea/freeipa-ca:/etc/ssl/freeipa-ca:ro,z
 HealthCmd=wget -q --spider http://127.0.0.1:3000/api/healthz
 HealthInterval=30s
 HealthTimeout=5s

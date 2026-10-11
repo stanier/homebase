@@ -1,0 +1,25 @@
+# Nothing environment-specific or secret here: the Matrix room ID and
+# the bot's token live in the receiver's config
+# (host_vars/metrics1.yml), and "alerts" below is the room-mapping name
+# it resolves.
+route:
+  receiver: matrix
+  group_by: [alertname, instance]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: matrix
+    webhook_configs:
+      - url: http://matrix-alertmanager-receiver:12345/alerts/alerts
+        send_resolved: true
+
+inhibit_rules:
+  # A host that's down takes everything else on it down too; one
+  # HostDown message beats a dozen follow-on alerts. Probe instances
+  # are named after the vhost or service rather than the host, so this
+  # only catches alerts whose instance is the inventory hostname.
+  - source_matchers: [alertname="HostDown"]
+    target_matchers: [alertname!="HostDown"]
+    equal: [instance]

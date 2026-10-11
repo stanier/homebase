@@ -307,13 +307,6 @@ var exact = []SecretSpec{
 		RandomBytes: rb(32),
 	},
 	{
-		Name:        "vault_tailscale_authkey",
-		Description: "Tailscale auth key for enrolling a host into the tailnet.",
-		ConsumedBy:  "roles/tailscale",
-		Strategy:    StrategyImportOnly,
-		ImportHint:  "generate from the Tailscale admin console under Settings > Keys.",
-	},
-	{
 		Name:        "vault_wazuh_indexer_admin_password",
 		Description: "Wazuh indexer admin password (plaintext, also hashed below).",
 		ConsumedBy:  "containerapps_env.wazuh (INDEXER_PASSWORD)",

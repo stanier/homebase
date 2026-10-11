@@ -6,7 +6,6 @@ nav = [
   { "Overview" = "index.md" },
   { "Typical procedure" = "Typical_Procedure.md" },
   { "Vault & secrets" = "VAULT.md" },
-  { "Package management" = "PACKAGE_MANAGEMENT.md" },
   { "Gitea Actions" = "GITEA_ACTIONS.md" },
 ]
 

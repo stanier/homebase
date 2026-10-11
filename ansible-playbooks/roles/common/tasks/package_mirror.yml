@@ -1,0 +1,88 @@
+---
+# Points dnf and apt at container-files/pkgmirror, always with the real
+# upstream kept as a fallback -- a down mirror slows an install down,
+# never blocks it.
+
+# dnf: baseurl lists are tried in order, so mirror first, upstream
+# second. The stock files ship a commented-out baseurl alongside the
+# active mirrorlist/metalink; the regexes match that line and our own
+# rewritten one alike, so re-runs (or a changed package_mirror_url)
+# converge rather than stacking. rocky-repos and epel-release mark these
+# files %config(noreplace), so package updates leave the edits alone.
+- name: Find the Rocky and EPEL repo files
+  ansible.builtin.find:
+    paths: /etc/yum.repos.d
+    patterns: ["rocky*.repo", "epel*.repo"]
+  register: package_mirror_repo_files
+  when: ansible_facts['os_family'] == 'RedHat'
+
+# The metalink would also make dnf reject a repomd.xml the mirror's
+# minute-long metadata cache hasn't caught up on yet.
+- name: Stop dnf choosing its own mirrors
+  ansible.builtin.replace:
+    path: "{{ item.path }}"
+    regexp: '^(mirrorlist|metalink)='
+    replace: '#\1='
+  loop: "{{ package_mirror_repo_files.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Fetch Rocky's repos through the mirror, upstream as fallback
+  ansible.builtin.replace:
+    path: "{{ item.path }}"
+    regexp: '^#?baseurl=\S*?dl\.rockylinux\.org/(\S+).*$'
+    replace: 'baseurl={{ package_mirror_url }}/dl.rockylinux.org/\1 https://dl.rockylinux.org/\1'
+  loop: "{{ package_mirror_repo_files.files | default([]) | selectattr('path', 'search', '/rocky[^/]*$') | list }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: ansible_facts['os_family'] == 'RedHat'
+
+# EPEL's stock baseurl is a download.example placeholder; dl.fedoraproject.org
+# is the master it stands in for.
+- name: Fetch EPEL through the mirror, upstream as fallback
+  ansible.builtin.replace:
+    path: "{{ item.path }}"
+    regexp: '^#?baseurl=\S*?/pub/epel/(\S+).*$'
+    replace: 'baseurl={{ package_mirror_url }}/dl.fedoraproject.org/pub/epel/\1 https://dl.fedoraproject.org/pub/epel/\1'
+  loop: "{{ package_mirror_repo_files.files | default([]) | selectattr('path', 'search', '/epel[^/]*$') | list }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: ansible_facts['os_family'] == 'RedHat'
+
+# apt: no sources rewriting. apt runs a Proxy-Auto-Detect hook with each
+# URI it's about to fetch and uses whatever proxy it prints, so the
+# mirror is used as a forward proxy for the upstreams it caches, and
+# only while it's answering.
+- name: Install apt's mirror-or-direct proxy hook
+  ansible.builtin.copy:
+    dest: /usr/local/bin/package-mirror-apt-proxy
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/bash
+      # Managed by ansible-playbooks (roles/common, package_mirror.yml).
+      # apt's Acquire::http::Proxy-Auto-Detect hook: prints the proxy to
+      # use for the URI in $1, or DIRECT.
+      case "$1" in
+        {% for host in package_mirror_apt_hosts %}http://{{ host }}/*{{ '|' if not loop.last }}{% endfor %}) ;;
+        *) echo DIRECT; exit 0 ;;
+      esac
+      if timeout 2 bash -c ': >/dev/tcp/{{ package_mirror_url | urlsplit("hostname") }}/{{ package_mirror_url | urlsplit("port") }}' 2>/dev/null; then
+        echo "{{ package_mirror_url }}"
+      else
+        echo DIRECT
+      fi
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Point apt at the proxy hook
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/01package-mirror
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      // Managed by ansible-playbooks (roles/common, package_mirror.yml).
+      Acquire::http::Proxy-Auto-Detect "/usr/local/bin/package-mirror-apt-proxy";
+  when: ansible_facts['os_family'] == 'Debian'

@@ -5,22 +5,11 @@
     state: present
   when: podman_exporter_enabled
 
-- name: Look up the containers user's uid
-  ansible.builtin.getent:
-    database: passwd
-    key: "{{ containers_user }}"
-
-- name: Compute containers user's XDG_RUNTIME_DIR once for this play
-  # ansible_facts.getent_passwd, not the bare getent_passwd -- see
-  # roles/containerapps' identical task for why.
-  ansible.builtin.set_fact:
-    containers_xdg_runtime_dir: "/run/user/{{ ansible_facts.getent_passwd[containers_user][1] }}"
-
-- name: Remove now-obsolete podman_exporter per-user override file
-  ansible.builtin.file:
-    path: "{{ containers_home }}/.config/prometheus-podman-exporter"
-    state: absent
-  notify: restart podman_exporter
+- name: Compute containers user's XDG_RUNTIME_DIR
+  ansible.builtin.include_role:
+    name: boxship
+    tasks_from: runtime_dir
+    public: true
 
 - name: Enable and start podman_exporter for the containers user
   ansible.builtin.systemd:
@@ -34,18 +23,13 @@
   when: podman_exporter_enabled
 
 - name: Allow metrics1 to scrape podman_exporter through firewalld
-  # Same zone reasoning as roles/node_exporter's identical task: the
-  # scrape arrives on the management interface, which isn't in
-  # firewall_zone on firewalled hosts.
-  ansible.posix.firewalld:
-    rich_rule: "rule family=ipv4 source address={{ podman_exporter_scrape_from }} port port={{ podman_exporter_port }} protocol=tcp accept"
-    zone: "{{ (management_firewalld_zone | default('internal')) if (management_network_enabled | default(false)) else (firewall_zone | default('public')) }}"
-    permanent: true
-    immediate: true
-    state: "{{ 'enabled' if podman_exporter_enabled else 'disabled' }}"
-  when:
-    - firewall_enabled | default(false)
-    - podman_exporter_scrape_from | length > 0
+  ansible.builtin.include_role:
+    name: firewall
+    tasks_from: scrape_port
+  vars:
+    firewall_scrape_port: "{{ podman_exporter_port }}"
+    firewall_scrape_from: "{{ podman_exporter_scrape_from }}"
+    firewall_scrape_enabled: "{{ podman_exporter_enabled }}"
 
 - name: Stop and disable podman_exporter for the containers user when opted out
   ansible.builtin.systemd:

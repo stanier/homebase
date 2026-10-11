@@ -48,6 +48,72 @@ lands in the management interface's firewalld zone, so the exporter
 roles open their ports there themselves. Everything else (app metrics,
 syslog) goes over `app_ip` and uses ordinary `firewall_rules`.
 
+## Alerting
+
+`container-files/alerting` runs on metrics1 as three containers:
+
+- **vmalert** evaluates the rules in `alerting/data/rules/*.yml` against
+  VictoriaMetrics every 30s and hands firing alerts to Alertmanager. It
+  writes alert state back to VictoriaMetrics, so a restart doesn't reset
+  `for:` timers.
+- **Alertmanager** groups (by `alertname` + `instance`), repeats every
+  4h while an alert stays firing, and holds silences. Its config,
+  `alerting/data/alertmanager.yml`, is plain tracked YAML. A `HostDown`
+  inhibits every other alert with the same `instance`. Its UI is at
+  `alertmanager.<base_domain>` via container-sandbox's Caddy, and every
+  alert message links there to silence it.
+- **matrix-alertmanager-receiver** turns Alertmanager's webhook into a
+  message in one Matrix room on chat1, as `@alertbot`. It talks to
+  Synapse on chat1's `app_ip:8008` directly, not through Caddy, so an
+  outage of Caddy still gets reported.
+
+The rules use the same job names and `instance` labels as the
+dashboards. They're grouped as hosts (down, disk full or filling,
+memory, failed systemd units), containers (not running, unhealthy) and
+services (blackbox probe failures, stalled cert renewal). Check rule
+changes before deploying with
+`vmalert -dryRun -rule='container-files/alerting/data/rules/*.yml'`,
+and Alertmanager's config with `amtool check-config`.
+
+### The alert bot
+
+Synapse is SSO-only, so `@alertbot` can't log in with a password.
+Instead it's an application service: chat1's
+`matrix/data/alertbot-registration.yaml` (from `host_vars/chat1.yml`)
+registers it, and the receiver uses that registration's `as_token` as
+its access token. See `ansible-playbooks/docs/VAULT.md` for the tokens.
+
+One-time setup after the first deploy of both hosts:
+
+1. Register the bot's account (on chat1; it's harmless to repeat, and
+   answers `M_USER_IN_USE` if the account already exists):
+
+   ```bash
+   curl -s -X POST -H "Authorization: Bearer $AS_TOKEN" -d '{"type":"m.login.application_service","username":"alertbot"}' http://localhost:8008/_matrix/client/v3/register
+   ```
+
+2. In Element, create the alerts room **with encryption off** (the
+   receiver can't post to E2EE rooms) and invite
+   `@alertbot:chat.<base_domain>`.
+3. Put the room's ID (Settings → Advanced) in
+   `host_vars/metrics1.yml`'s `alerting_matrix_room_id` and redeploy
+   metrics1. The bot accepts the invite when it sends its first
+   message.
+
+To test the whole path without waiting for something to break, post an
+alert straight to Alertmanager from metrics1:
+
+```bash
+curl -s -X POST -H 'Content-Type: application/json' -d '[{"labels":{"alertname":"TestAlert","severity":"warning","instance":"metrics1"},"annotations":{"summary":"Test alert, ignore"}}]' http://127.0.0.1:9093/api/v2/alerts
+```
+
+The message arrives after `group_wait` (30s), and a RESOLVED message
+follows about 5 minutes later, once the alert ages out.
+
+Nothing watches the watcher: if metrics1 or chat1 goes down, no alert
+gets out. Matrix also only exists in `dangerzone`, so `alerting` is
+deployed there alone.
+
 ## Logging
 
 - **Loki** + **Promtail** (`container-files/loki`,

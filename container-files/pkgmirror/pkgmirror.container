@@ -1,0 +1,32 @@
+[Unit]
+Description=Package mirror (pull-through cache for the fleet's dnf/apt repos)
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/library/nginx:1.30.5-alpine
+# Clients reach this cross-host on the app network -- rocky hosts via
+# rewritten baseurls, Proxmox nodes via apt's Proxy-Auto-Detect hook (see
+# ansible-playbooks' roles/common package_mirror.yml).
+PublishPort=8080:8080
+# The cache itself. Disposable -- losing it only costs a re-download --
+# so a named volume rather than a bind mount outside the synced tree.
+Volume=pkgmirror_cache:/var/cache/nginx
+# The image's entrypoint envsubst's /etc/nginx/templates/*.template into
+# conf.d/, which is how the resolver line below gets filled in.
+Volume=/srv/containers/container-files/pkgmirror/data/default.conf.template:/etc/nginx/templates/default.conf.template:ro,z
+# nginx doesn't read resolv.conf itself; this has the entrypoint export
+# its nameservers as ${NGINX_LOCAL_RESOLVERS} for the template's
+# `resolver` (needed since proxy_pass targets are variables).
+Environment=NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1
+HealthCmd=wget -q --spider http://127.0.0.1:8080/healthz
+HealthInterval=30s
+HealthTimeout=5s
+HealthStartPeriod=10s
+HealthRetries=3
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

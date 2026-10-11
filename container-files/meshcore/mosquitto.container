@@ -1,0 +1,31 @@
+[Unit]
+Description=MQTT broker for the MeshCore gateway
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/library/eclipse-mosquitto:2.0.22
+Network=meshcore.network
+NetworkAlias=mosquitto
+# Apps on other hosts (host_vars/meshcore1.yml's firewall_rules says
+# which) connect here; the gateway itself uses the meshcore network.
+PublishPort=1883:1883
+Volume=/srv/containers/container-files/meshcore/mosquitto:/mosquitto/config:ro,z
+# Plaintext user:password lines, templated from the vault by
+# host_vars/meshcore1.yml's containerapps_secret_files. The vault holds
+# the passwords clients actually use; the start command hashes a copy.
+Volume=/srv/containers/container-files/meshcore/data/mosquitto-passwd:/run/mosquitto-passwd:ro,z
+# Mosquitto drops to its own user and warns (future versions refuse)
+# when the password or ACL file isn't private to that user, which the
+# bind-mounted originals can't be. So both are copied into /tmp, owned
+# by mosquitto and 0600, before it starts.
+Entrypoint=/bin/sh
+Exec=-c "cp /run/mosquitto-passwd /tmp/passwd && cp /mosquitto/config/acl /tmp/acl && chown mosquitto:mosquitto /tmp/passwd /tmp/acl && chmod 0600 /tmp/passwd /tmp/acl && mosquitto_passwd -U /tmp/passwd && exec mosquitto -c /mosquitto/config/mosquitto.conf"
+# No HealthCmd: anonymous access is off, so a probe would need its own
+# account. The gateway's /healthz covers the broker connection.
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

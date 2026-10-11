@@ -2,9 +2,6 @@
 - name: Update packages on all hosts
   hosts: all
   become: true
-  # Every task here is per-host only, so let each host run ahead rather
-  # than wait at every task for the slowest one (linear's default).
-  strategy: free
 
   pre_tasks:
     - name: Ensure Proxmox nodes use the no-subscription repo, not the paywalled enterprise one
@@ -24,15 +21,6 @@
           tags: [snippet_permissions]
       when: "'proxmox' in group_names"
       tags: snippet_permissions
-
-    - name: Ensure ksmtuned merges identical VM memory pages before the node is short on RAM
-      ansible.builtin.include_role:
-        name: hypervisor
-        tasks_from: ksm
-        apply:
-          tags: [ksm]
-      when: "'proxmox' in group_names"
-      tags: ksm
 
     - name: Snapshot this VM before updating, if it's a known Proxmox VM
       ansible.builtin.include_role:
