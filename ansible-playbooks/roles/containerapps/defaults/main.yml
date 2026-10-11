@@ -81,6 +81,17 @@ containerapps_service_dirs:
   gitea:
     - { path: /srv/gitea/data, mode: "a+rwX" }
     - { path: /srv/gitea/config, mode: "a+rwX" }
+  # Also outside the synced tree: agentd's traces/logs/sessions and
+  # Garage's object store. agentd and Garage run as root in their
+  # containers, which rootless Podman maps to containers_user, so the
+  # default 0750 is enough. /srv/stoa/squid comes from
+  # containerapps_secret_files seeding squid.conf there.
+  stoa:
+    - { path: /srv/stoa/traces }
+    - { path: /srv/stoa/logs }
+    - { path: /srv/stoa/sessions }
+    - { path: /srv/stoa/garage/meta }
+    - { path: /srv/stoa/garage/data }
   # Both Caddy builds bind-mount appdeploy-state; podman refuses to start
   # a container whose bind-mount source is missing. caddy-route.sh
   # (roles/appdeploy_caddy) writes the per-app routes.
