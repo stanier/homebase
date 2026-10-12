@@ -1,0 +1,28 @@
+[Unit]
+Description=Alertmanager to Matrix receiver
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/metio/matrix-alertmanager-receiver:2026.9.23
+Network=alerting.network
+NetworkAlias=matrix-alertmanager-receiver
+# Only its /metrics needs reaching from outside the alerting network
+# (vmagent, Network=host); Alertmanager posts to it by NetworkAlias.
+PublishPort=127.0.0.1:12345:12345
+# The image runs as distroless's nonroot uid, which can't read the 0600
+# Ansible-templated config (it carries the bot's access token). Container
+# root is the unprivileged containers user on the host under rootless
+# Podman -- same reasoning as synapse.container's UID=0.
+User=0:0
+# Templated in by host_vars/metrics1.yml's containerapps_secret_files.
+Volume=/srv/containers/container-files/alerting/data/matrix-alertmanager-receiver.yaml:/etc/matrix-alertmanager-receiver.yaml:ro,z
+Exec=--config-path=/etc/matrix-alertmanager-receiver.yaml
+# No HealthCmd: the image is distroless (no shell, no wget). vmagent's
+# up{job="matrix-alertmanager-receiver"} covers it instead.
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

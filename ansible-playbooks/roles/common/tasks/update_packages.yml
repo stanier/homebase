@@ -1,5 +1,3 @@
 ---
 - name: Update packages for detected package manager
-  ansible.builtin.include_tasks: "package_management/update/update_{{ ansible_facts['pkg_mgr'] }}.yml"
-  tags:
-    - update
+  ansible.builtin.include_tasks: "update_{{ ansible_facts['pkg_mgr'] }}.yml"

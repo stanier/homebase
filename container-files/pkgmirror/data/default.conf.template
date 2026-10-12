@@ -1,0 +1,95 @@
+# Pull-through cache for the fleet's dnf and apt repos. Rendered by the
+# nginx image's entrypoint into /etc/nginx/conf.d/default.conf -- only
+# environment variables that are actually set get substituted (here,
+# ${NGINX_LOCAL_RESOLVERS}), so nginx's own $variables pass through.
+#
+# Two ways in, sharing one cache:
+#   - path prefix (dnf baseurls):
+#       GET /dl.rockylinux.org/pub/rocky/10/BaseOS/...
+#   - forward-proxy style (apt's Acquire::http::Proxy):
+#       GET http://deb.debian.org/debian/dists/...
+# Either way "$host$uri" ends up as "<upstream host>/<path>", optionally
+# behind this mirror's own address, which is what the map below matches.
+#
+# Only the upstreams listed in the map are fetched -- anything else is a
+# 404, so this isn't an open proxy. Keep them in step with
+# ansible-playbooks' roles/common package_mirror_apt_hosts and the
+# baseurl rewrites in its package_mirror.yml.
+
+log_format pkgmirror '$remote_addr "$request" $status $body_bytes_sent '
+                     'cache=$upstream_cache_status ${request_time}s';
+
+proxy_cache_path /var/cache/nginx/pkgmirror levels=1:2 keys_zone=pkgmirror:64m
+                 max_size=40g min_free=2g inactive=90d use_temp_path=off;
+
+resolver ${NGINX_LOCAL_RESOLVERS} valid=300s ipv6=off;
+resolver_timeout 10s;
+
+map "$host$uri" $pkgmirror_upstream {
+    default "";
+    "~^(?:[^/]*/)?(?<target>(?:dl\.rockylinux\.org|dl\.fedoraproject\.org|deb\.debian\.org|security\.debian\.org)/.*)$"  https://$target;
+    # Proxmox's HTTPS cert is only valid for enterprise.proxmox.com, so
+    # plain HTTP -- apt verifies InRelease signatures either way.
+    "~^(?:[^/]*/)?(?<target>download\.proxmox\.com/.*)$"  http://$target;
+}
+
+server {
+    listen 8080 default_server;
+
+    access_log /var/log/nginx/access.log pkgmirror;
+
+    proxy_cache pkgmirror;
+    proxy_cache_key $pkgmirror_upstream;
+    # Collapse concurrent misses (a fleet-wide update) into one upstream
+    # fetch; the timeout has to cover the biggest packages.
+    proxy_cache_lock on;
+    proxy_cache_lock_timeout 5m;
+    proxy_cache_lock_age 5m;
+    # Expired entries are revalidated with If-Modified-Since, so an
+    # unchanged file costs a 304, not a re-download.
+    proxy_cache_revalidate on;
+    # Keep serving what's cached if upstream is down.
+    proxy_cache_use_stale error timeout http_500 http_502 http_503 http_504;
+    # Mirrors' own caching headers are tuned for browsers, not this --
+    # the proxy_cache_valid lines below decide.
+    proxy_ignore_headers Cache-Control Expires Set-Cookie;
+
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_ssl_server_name on;
+    proxy_ssl_verify on;
+    proxy_ssl_verify_depth 4;
+    proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+
+    add_header X-Cache-Status $upstream_cache_status always;
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # Packages never change once published (a rebuild gets a new
+    # version-release), so they're kept until evicted for space.
+    location ~ \.(?:rpm|deb|udeb)$ {
+        if ($pkgmirror_upstream = "") {
+            return 404;
+        }
+        proxy_pass $pkgmirror_upstream;
+        proxy_cache_valid 200 90d;
+        proxy_cache_valid 404 1m;
+    }
+
+    # Everything else is repo metadata (repomd.xml, InRelease, Packages,
+    # ...), which changes in place. Kept short so a new upstream release
+    # shows up within a minute; dnf's content-addressed repodata/ files
+    # and apt's by-hash/ ones revalidate to a cheap 304 anyway.
+    location / {
+        if ($pkgmirror_upstream = "") {
+            return 404;
+        }
+        proxy_pass $pkgmirror_upstream;
+        proxy_cache_valid 200 1m;
+        proxy_cache_valid 404 1m;
+    }
+}

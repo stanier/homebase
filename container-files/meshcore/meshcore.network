@@ -1,0 +1,4 @@
+[Unit]
+Description=MeshCore network
+
+[Network]

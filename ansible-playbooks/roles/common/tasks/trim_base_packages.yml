@@ -1,13 +1,4 @@
 ---
-# Same trimming build_template.yml bakes into new templates
-# (proxmox_template_bake_uninstall_packages /
-# proxmox_template_bake_disabled_services, and the crashkernel= strip),
-# enforced here for hosts cloned before that existed. See those vars in
-# roles/hypervisor/defaults/main.yml for why each one goes.
-#
-# The crashkernel= reservation is only actually released at the next
-# boot -- this doesn't reboot anything itself; plays/vm/reboot_vms.yml
-# or the next update.yml reboot picks it up.
 - block:
   - name: Remove kdump, udisks2 and cockpit
     ansible.builtin.dnf:
@@ -18,8 +9,6 @@
       state: absent
       autoremove: false
 
-  # fwupd itself has to stay -- on EL10 it Provides dbxtool, which the
-  # dnf-protected shim-x64 requires.
   - name: Mask fwupd and its refresh timer
     ansible.builtin.systemd_service:
       name: "{{ item }}"
@@ -50,5 +39,3 @@
       enabled: false
       state: stopped
   when: ansible_facts['os_family'] == 'RedHat'
-  tags:
-    - packages

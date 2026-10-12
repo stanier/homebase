@@ -1,0 +1,21 @@
+[Unit]
+Description=Stoa garage (S3-compatible object storage for attachments/uploads)
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/dxflrs/garage:v2.3.0
+Network=stoa-external.network
+NetworkAlias=garage
+Environment=GARAGE_ALLOW_WORLD_READABLE_SECRETS=true
+# GARAGE_RPC_SECRET, GARAGE_ADMIN_TOKEN come from .env.
+EnvironmentFile=/srv/containers/container-files/stoa/.env
+Volume=/srv/containers/container-files/stoa/data/config/garage.toml:/etc/garage.toml:ro,z
+Volume=/srv/stoa/garage/meta:/var/lib/garage/meta:z
+Volume=/srv/stoa/garage/data:/var/lib/garage/data:z
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

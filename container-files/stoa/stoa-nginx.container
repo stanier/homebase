@@ -1,0 +1,20 @@
+[Unit]
+Description=Stoa nginx (single ingress for agentd + webd)
+After=network-online.target stoa-agentd.service stoa-webd.service
+Wants=network-online.target
+Requires=stoa-agentd.service
+
+[Container]
+Image=docker.io/library/nginx:1.30.0-alpine
+Network=stoa-external.network
+PublishPort=8090:8080
+# A template, not conf.d/default.conf directly -- see nginx.conf's header.
+# Has the entrypoint export NGINX_LOCAL_RESOLVERS for that template.
+Environment=NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1
+Volume=/srv/containers/container-files/stoa/data/config/nginx.conf:/etc/nginx/templates/default.conf.template:ro,z
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

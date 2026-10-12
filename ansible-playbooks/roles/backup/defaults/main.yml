@@ -1,10 +1,6 @@
 ---
-# Restic repository for this host's backups. One repo per host, not one
-# shared repo for the whole fleet -- keeps each host's snapshots in their
-# own labelled silo, so restoring after a full wipe-and-rebuild is just
-# "point the replacement host at this same path" instead of untangling
-# one shared namespace. Include {{ inventory_hostname }} in the value,
-# e.g.:
+# One restic repo per host, so a rebuilt host just points at the same
+# path. Include {{ inventory_hostname }}, e.g.:
 #   backup_repository: "s3:https://s3.example.com/homelab-backups/{{ inventory_hostname }}"
 backup_repository: ""
 

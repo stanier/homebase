@@ -1,0 +1,6 @@
+[Unit]
+Description=Stoa local-idp <-> its Postgres (internal -- no internet route)
+
+[Network]
+NetworkName=postgres-localidp-net
+Internal=true

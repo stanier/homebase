@@ -1,0 +1,20 @@
+[Unit]
+Description=Build stoa agentd image
+
+[Build]
+ImageTag=localhost/stoa-agentd
+File=Containerfile
+Target=agentd
+# A URL here tells podman build to clone this as the build context
+# instead of using a local directory -- see stoa-apikeyd.build's comment
+# for why this isn't a local path onto the synced container-files tree.
+SetWorkingDirectory=https://github.com/stanier/stoa.git#main
+
+# First in the build chain (see stoa-apikeyd.build's After= for why these
+# 7 .build units are ordered relative to each other at all) -- pays for
+# the shared `builder` stage's `go mod download` + precompile from cold,
+# which every other Go target's build then hits from Podman's layer
+# cache. TimeoutStartSec matches the rest of the chain -- see that unit's
+# comment for why 90s (systemd's default) isn't enough.
+[Service]
+TimeoutStartSec=3600

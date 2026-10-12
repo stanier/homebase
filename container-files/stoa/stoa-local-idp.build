@@ -1,0 +1,15 @@
+[Unit]
+Description=Build stoa local-idp image
+# See stoa-apikeyd.build's comment -- part of the same serialized chain.
+After=stoa-authd-build.service
+
+[Build]
+ImageTag=localhost/stoa-local-idp
+File=Containerfile
+Target=local-idp
+# See stoa-apikeyd.build's comment.
+SetWorkingDirectory=https://github.com/stanier/stoa.git#main
+
+# See stoa-apikeyd.build's comment.
+[Service]
+TimeoutStartSec=3600

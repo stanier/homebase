@@ -1,19 +1,9 @@
 #!/bin/bash
-# Managed by ansible-playbooks (roles/appdeploy_caddy) -- edits here are
-# overwritten on the next run. Forced SSH command for the key apphost's
-# containers_user generated to reach this host (see roles/appdeploy) --
-# same command="..." trick as the CI key deploy.sh sits behind, so a
-# compromised apphost can only ever write one Caddy route file here and
-# trigger a reload, nothing else on container-sandbox.
+# Managed by ansible-playbooks (roles/appdeploy_caddy).
 #
-# app_host arrives as an explicit 4th argument (app-host's own app_ip,
-# baked into deploy.sh.j2 at template time) rather than being parsed off
-# SSH_CLIENT -- the SSH hop that invokes this script travels over the
-# management network (ansible_host), which isn't the address Caddy
-# should ever proxy real application traffic to. A compromised apphost
-# already controls $app/$port entirely (forwarded verbatim from
-# whatever the CI key's own caller sent deploy.sh), so it controlling
-# this argument too doesn't widen the actual trust boundary any further.
+# Forced command for app-host's caddy-route key: writes one route file
+# and reloads Caddy. app_host is app-host's app_ip, passed explicitly
+# because this SSH hop arrives over the management network.
 set -euo pipefail
 
 CADDY_APPS_DIR="{{ containers_home }}/appdeploy-state/caddy-apps"
@@ -51,11 +41,8 @@ fi
 if [[ "$app_type" == "ssh" ]]; then
   hostname="$app.ssh.$DOMAIN_SUFFIX"
 
-  # Exists only so Caddy's automatic HTTPS obtains/holds a cert for
-  # this hostname -- the layer4 tls handler in the Caddyfile's layer4
-  # block reuses it from Caddy's own cert store rather than managing
-  # certs itself (caddy-l4 is explicit about this: it does no cert
-  # management of its own). Real SSH traffic never hits this vhost.
+  # Only so Caddy obtains a cert for this name; the layer4 tls handler
+  # reuses it. SSH traffic never reaches this vhost.
   cat > "$CADDY_APPS_DIR/$app.caddy" <<EOF
 $hostname {
 	import acme_tls
@@ -63,10 +50,8 @@ $hostname {
 }
 EOF
 
-  # Imported by the layer4 block (see container-files/caddy-l4's
-  # Caddyfile) -- matches this app's SNI, terminates the TLS the client
-  # wrapped its SSH connection in, and forwards the now-plain SSH bytes
-  # to the app's real container port.
+  # Imported by caddy-l4's layer4 block: match SNI, unwrap TLS, forward
+  # plain SSH to the app.
   cat > "$SSH_APPS_DIR/$app.caddyroute" <<EOF
 @$app tls sni $hostname
 route @$app {
@@ -75,28 +60,18 @@ route @$app {
 }
 EOF
 else
-  # acme_tls is the snippet defined once at the top of caddy/data/Caddyfile
-  # -- gets this app's cert from the shared internal ACME server (HTTP-01,
-  # same as every other non-wildcard vhost there) instead of a per-instance
-  # self-signed tls internal cert, so it's already trusted by anything that
-  # trusts that one root, no separate import needed as apps come and go.
+  # acme_tls (Caddyfile snippet): cert from the internal ACME server.
   cat > "$CADDY_APPS_DIR/$app.caddy" <<EOF
 $app.$DOMAIN_SUFFIX {
 	import acme_tls
 	reverse_proxy $app_host:$port
 }
 EOF
-  # An app that started out as ssh-type and later switched to http (or
-  # vice versa) shouldn't leave a stale route/vhost of the old type
-  # behind -- both writes above are keyed by $app, so removing the
-  # other type's leftover file keeps re-deploys idempotent.
+  # Drop the layer4 route if this app switched from ssh to http.
   rm -f "$SSH_APPS_DIR/$app.caddyroute"
 fi
 
-# caddy-l4.container pins ContainerName=caddy (its unit basename is
-# caddy-l4, and Quadlet's default naming would otherwise produce
-# systemd-caddy-l4) so this exec target stays stable regardless of
-# which caddy variant (plain caddy vs caddy-l4) is actually deployed.
+# Both Caddy variants pin ContainerName=caddy.
 podman exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 
 if [[ "$app_type" == "ssh" ]]; then

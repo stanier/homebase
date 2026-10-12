@@ -1,0 +1,7 @@
+[Unit]
+Description=Build meshcore-webui image
+
+[Build]
+ImageTag=localhost/meshcore-webui
+File=Containerfile.webui
+SetWorkingDirectory=/srv/containers/container-files/meshcore

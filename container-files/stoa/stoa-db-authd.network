@@ -1,0 +1,6 @@
+[Unit]
+Description=Stoa authd <-> its Postgres (internal -- no internet route)
+
+[Network]
+NetworkName=postgres-authd-net
+Internal=true

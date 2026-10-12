@@ -1,0 +1,39 @@
+[Unit]
+Description=Stoa authd (OAuth2 identity broker)
+# stoa-local-idp is a soft (After-only, not Requires) dependency -- authd's
+# own healthcheck retries cover local-idp not being ready yet, same as the
+# upstream compose file.
+After=network-online.target stoa-postgres-authd.service stoa-migrate-authd.service stoa-local-idp.service
+Wants=network-online.target
+Requires=stoa-postgres-authd.service stoa-migrate-authd.service
+
+[Container]
+Image=stoa-authd.build
+Network=stoa-db-authd.network
+Network=stoa-idp.network
+Network=stoa-external.network
+NetworkAlias=authd
+PublishPort=8888:8888
+Environment=AUTHD_CONFIG=/etc/authd/config.yaml
+# authd -> apikeyd best-effort key provisioning at login reuses apikeyd's admin token.
+Environment=AUTHD_APIKEYD_URL=http://apikeyd:8889
+# AUTHD_DATABASE_URL, AUTHD_EXTERNAL_URL, AUTHD_ADMIN_TOKEN,
+# AUTHD_OAUTH_LOCAL_CLIENT_SECRET, AUTHD_ALLOWED_REDIRECT_ORIGINS,
+# AUTHD_APIKEYD_ADMIN_TOKEN come from .env.
+EnvironmentFile=/srv/containers/container-files/stoa/.env
+# Templated per environment from host_vars/stoa.yml (needs base_domain).
+Volume=/srv/containers/container-files/stoa/authd.yaml:/etc/authd/config.yaml:ro,z
+# Keycloak sits behind Caddy's internal CA. Go reads every cert in
+# SSL_CERT_DIR on top of the image's default bundle file.
+Volume=/srv/containers/container-files/stoa/root-ca.crt:/etc/stoa-ca/root-ca.crt:ro,z
+Environment=SSL_CERT_DIR=/etc/ssl/certs:/etc/stoa-ca
+HealthCmd=wget -qO- http://localhost:8888/healthz || exit 1
+HealthInterval=10s
+HealthTimeout=5s
+HealthRetries=6
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

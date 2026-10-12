@@ -1,0 +1,65 @@
+---
+# node_exporter.yml, podman_exporter.yml, logging.yml, auditd.yml,
+# wazuh_agent.yml and apps/mail.yml as one free-strategy play, so a fast
+# host runs straight through instead of waiting for the slowest host at
+# each play boundary. Each step keeps its standalone play's tag and host
+# selection; handlers are flushed after each step, as they were when each
+# was its own play. Keep in sync with those plays.
+- name: Deploy per-host monitoring, logging and mail agents
+  hosts: all
+  become: true
+  strategy: free
+
+  tasks:
+    - name: Deploy node_exporter (system metrics)
+      ansible.builtin.import_role:
+        name: node_exporter
+      tags: node_exporter
+
+    - name: Flush node_exporter handlers
+      ansible.builtin.meta: flush_handlers
+      tags: always
+
+    - name: Deploy podman_exporter (container metrics) to rootless-podman hosts
+      ansible.builtin.import_role:
+        name: podman_exporter
+      when: "'containers' in group_names or 'apphost' in group_names"
+      tags: podman_exporter
+
+    - name: Flush podman_exporter handlers
+      ansible.builtin.meta: flush_handlers
+      tags: always
+
+    - name: Configure remote syslog forwarding
+      ansible.builtin.import_role:
+        name: logging
+      tags: logging
+
+    - name: Flush logging handlers
+      ansible.builtin.meta: flush_handlers
+      tags: always
+
+    - name: Configure host-level audit logging
+      ansible.builtin.import_role:
+        name: auditd
+      tags: auditd
+
+    - name: Flush auditd handlers
+      ansible.builtin.meta: flush_handlers
+      tags: always
+
+    - name: Enroll host with the Wazuh manager
+      ansible.builtin.import_role:
+        name: wazuh_agent
+      tags: wazuh_agent
+
+    - name: Flush wazuh_agent handlers
+      ansible.builtin.meta: flush_handlers
+      tags: always
+
+    # mail1 runs the full MTA from roles/mail_server instead.
+    - name: Configure outbound mail relay
+      ansible.builtin.import_role:
+        name: postfix
+      when: "'mail_server' not in group_names"
+      tags: mail

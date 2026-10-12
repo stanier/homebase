@@ -1,0 +1,18 @@
+[Unit]
+Description=Stoa local-idp DB migrations (one-shot, runs before stoa-local-idp)
+After=network-online.target stoa-postgres-localidp.service
+Wants=network-online.target
+Requires=stoa-postgres-localidp.service
+
+[Container]
+Image=stoa-auth-admin.build
+Network=stoa-db-localidp.network
+EnvironmentFile=/srv/containers/container-files/stoa/.env
+Exec=idp migrate up
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=default.target

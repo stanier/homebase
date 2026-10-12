@@ -1,6 +1,8 @@
 *.retry
 .vault_pass*
 
+.claude
+
 inventory
 inventory/**
 !examples/**

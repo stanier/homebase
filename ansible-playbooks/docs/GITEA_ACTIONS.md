@@ -1,12 +1,7 @@
 # Gitea Actions: gitea-runner, appdeploy, and private action repos
 
-Everything below was found the hard way getting CI working end-to-end
-(gitea-runner registering and staying registered, a workflow actually
-building and deploying, referencing a private shared action repo). Read
-this before touching `roles/containerapps`' gitea-runner service,
-`roles/appdeploy`/`roles/appdeploy_caddy`, or debugging a workflow
-failure -- most failures in this area are one of the things below, not
-a new problem.
+Known failure modes in CI, and their fixes. Check here first before
+debugging a workflow or touching gitea-runner or appdeploy.
 
 ## gitea-runner
 
@@ -26,26 +21,18 @@ service in `container-files` addresses fleet peers by raw `app_ip`
 (see Caddy's Caddyfile), so this never mattered until gitea-runner
 needed to resolve an actual hostname.
 
-Fix, two places (both needed -- they're separate container-create
-calls). Both files are templated from `gitea-runner-1`'s
-`containerapps_secret_files` (not tracked in `container-files` --
-same pattern as `vmagent/vmagent.container`), specifically so the IP
-comes from `hostvars['dnsguard'].app_ip` instead of being hardcoded --
-it drifted once already when AdGuardHome moved off `container-sandbox`
-onto its own dedicated `dnsguard` host, which silently broke this with
-no config change on either side to point at:
+Fix, in two places (separate container-create calls), both templated
+from `gitea-runner-1`'s `containerapps_secret_files` so the address
+comes from `hostvars['dnsguard'].app_ip`:
 - `gitea-runner.container`'s `DNS=` -- covers `act_runner` itself.
 - `gitea-runner/data/config.yaml`'s `container.options: --dns=...`
   -- covers each *job* container `act_runner` spawns per workflow run,
   which are separate `docker create` calls via the podman socket and
   aren't covered by the quadlet's own `DNS=`.
 
-If this breaks again, suspect `dnsguard`'s `app_ip` having changed
-(another host move, a re-IP) rather than a code/config regression --
-confirm with `ansible-inventory --host dnsguard | grep app_ip` and
-diff against what's actually deployed in
-`/srv/containers/container-files/gitea-runner/gitea-runner.container`
-on `gitea-runner-1`.
+If it breaks again, compare dnsguard's `app_ip` in inventory with what's
+deployed in `/srv/containers/container-files/gitea-runner/` on
+`gitea-runner-1`.
 
 ### SELinux: confined container can't connect to the podman socket
 
@@ -60,18 +47,13 @@ sudo ausearch -m avc -ts recent -i | tail -40
 Look for `denied { connectto } ... tclass=unix_stream_socket` with
 `tcontext=...:container_runtime_t:...`.
 
-Cause: SELinux's `unix_stream_socket` "connectto" check looks at the
-*listening process's* context (podman's own API socket runs
-unconfined, type `container_runtime_t`), not the socket file's label --
-so relabeling the bind mount with `:z`/`:Z` never fixes this (that only
-affects file-object access). No stock boolean covers it either --
-`container_connect_any` looks like the right one on paper but is scoped
-to `tcp_socket name_connect`, a different object class entirely.
+Cause: `connectto` is checked against the *listening process's* context
+(`container_runtime_t`), not the socket file's label, so `:z`/`:Z`
+relabeling can't help. No stock boolean covers it
+(`container_connect_any` is for TCP).
 
-Fix: a minimal custom SELinux policy module granting exactly the one
-rule `audit2allow` would generate from the denial (see
-`roles/containerapps/tasks/main.yml`, "Deploy custom SELinux policy
-module source..."). Verify it loaded:
+Fix: `roles/containerapps` loads a one-rule policy module, exactly what
+`audit2allow` generates from the denial. Verify it loaded:
 
 ```
 semodule -l | grep gitea_runner_podman_sock
@@ -83,17 +65,10 @@ Symptom: a new "homelab-runner" entry appears in Gitea's Site
 Administration > Actions > Runners on every `podman.yml` run instead of
 the same one persisting.
 
-Cause: the container-files sync task (`ansible.posix.synchronize`) runs
-with `delete: true`. `act_runner` writes its persistent identity to
-`gitea-runner/data/.runner` on the host at runtime, but that file never
-exists in the local checkout being synced *from* -- so plain `--delete`
-wiped it out on every single run, right before the "already registered"
-check ever got a chance to see it, forcing a fresh registration.
-
-Fix: `--exclude=gitea-runner/data/.runner` in that sync task's
-`rsync_opts`. If you ever see duplicate/stale runner entries in Gitea
-from before this fix, remove them by hand in the Runners admin page --
-nothing automated dedupes them.
+Cause: act_runner's identity file `gitea-runner/data/.runner` getting
+deleted. The local-source sync excludes it from `--delete`; if a new
+sync path is added, it needs the same exclude. Stale runner entries
+have to be removed by hand in the Runners admin page.
 
 ## Fleet-wide: VM app-network DNS points at the wrong resolver
 
@@ -103,29 +78,13 @@ resolve `*.dangerzone.internal` at all -- e.g. issuing a cert for a new
 acme.dangerzone.internal on 1.1.1.1:53: no such host` in
 `podman logs systemd-caddy`.
 
-Cause: `proxmox-tofu` never sets `nameservers` for any VM
-(`nameservers = []` throughout `environments/vms.tf`), so every VM has
-only ever resolved through whatever its app-network DHCP handed out
-(in this fleet: a home router + `1.1.1.1`, confirmed via `nmcli -f
-ipv4.dns con show`). None of those know about `base_domain`.
-`gitea-runner`'s DNS issue above is the *container*-level flavor of
-this; this is the same root problem at the VM's own OS level.
-
-Fix: `roles/common/tasks/internal_dns.yml` points every VM's
-`cloud-init eth0` connection at AdGuardHome (`dnsguard`'s
-`app_ip`) via `community.general.nmcli`, replacing the DHCP-provided
-DNS entirely (AdGuardHome already forwards non-internal queries
-upstream itself, so this covers both internal and external
-resolution). Applied via `roles/common`, which
-`plays/system/baseline_packages.yml` re-applies to already-onboarded
-hosts:
+Cause: the VM is still using DHCP-provided resolvers, which don't know
+`base_domain`. `roles/common/tasks/internal_dns.yml` points every VM at
+dnsguard only; re-apply it with:
 
 ```
 ansible-playbook -i inventory/dangerzone plays/system/baseline_packages.yml --ask-vault-pass -l <host>
 ```
-
-Safe to run against `hosts: all` -- the task is gated to `'vm' in
-group_names`, so it no-ops on the Proxmox hypervisors.
 
 ## appdeploy
 
@@ -135,17 +94,12 @@ See `docs/VAULT.md`'s "appdeploy CI key" section for the full secret
 list. Two easy-to-miss gotchas:
 
 - **`vault_appdeploy_ci_private_key` and `appdeploy_ci_public_key` must
-  actually be the same keypair.** Nothing checks this automatically --
-  the private key is vaulted as an offline backup, the public key is a
-  separate plaintext var, and it is entirely possible to update one
-  without the other (this happened: a stale keypair mismatch between
-  `dangerzone` and `testzone` silently broke every deploy for a while,
-  surfacing only as a generic `Permission denied (publickey,...)` on
-  `app-host`). Verify they match any time you suspect drift, without
-  ever printing the private key:
+  be the same keypair.** Nothing checks it, and a mismatch only shows up
+  as `Permission denied (publickey,...)` on app-host. Check without
+  printing the key:
 
   ```bash
-  cd ~/git/sources/gitea/homebase/ansible-playbooks
+  cd ~/homebase/ansible-playbooks
   ansible localhost -m ansible.builtin.copy -a \
     "content={{ vault_appdeploy_ci_private_key }} dest=/tmp/appdeploy_ci_priv mode=0600" \
     -e @inventory/dangerzone/group_vars/all/vault.yml \
@@ -221,15 +175,13 @@ workflow to actually fetch it:
 
 Every app repo's workflow should reference
 `${{ secrets.SSH_PRIVATE_KEY }}` / `${{ vars.DEPLOY_HOST }}` --
-`roles/appdeploy` pushes both automatically into every repo `keyton`
-owns (see `docs/VAULT.md`). Nothing to configure by hand beyond
-enabling Actions on the repo.
+`roles/appdeploy` provides both at user level (see `docs/VAULT.md`), so
+a repo only needs Actions enabled.
 
 ## The two `ansible-inventory` clones gotcha
 
-This caused most of the "I already fixed that, why is it still
-broken?" confusion above: `~/git/sources/gitea/ansible-inventory` and
-`~/git/sources/gitea/homebase/ansible-playbooks/inventory` are two
+If a fix "isn't working": `~/git/sources/gitea/ansible-inventory` and
+`~/homebase/ansible-playbooks/inventory` are two
 **independent clones** of the same `ansible-inventory` repo -- nothing
 keeps them in sync automatically. Editing one (or committing without
 pushing) has zero effect on a play run from the other. Before
@@ -237,7 +189,7 @@ concluding a fix "isn't working," confirm:
 
 ```
 git -C ~/git/sources/gitea/ansible-inventory status -sb
-git -C ~/git/sources/gitea/homebase/ansible-playbooks/inventory status -sb
+git -C ~/homebase/ansible-playbooks/inventory status -sb
 ```
 
 Both should show clean and `main...origin/main` with no ahead/behind,

@@ -19,47 +19,93 @@ containerapps_dest: "{{ containers_home }}/container-files"
 #     - gitea
 containerapps_quadlet_services: []
 
-# Same as containerapps_quadlet_services, but the unit files are synced
-# without being started -- for a converted service that isn't currently
-# wanted running. Its .container unit should omit [Install] too, so it
-# also doesn't auto-start at boot; start it manually when actually needed.
+# Synced but not started. Omit [Install] from such units too so they
+# don't start at boot either.
 containerapps_quadlet_services_disabled: []
 
-# Which of containerapps_quadlet_services (or _disabled) run as genuine
-# root, system-scope quadlets (/etc/containers/systemd) instead of the
-# containers user's own rootless ~/.config/containers/systemd. Keep this
-# as short as possible -- it's an escape hatch for a service whose
-# upstream image needs kernel-level CAP_NET_ADMIN/NAT manipulation a
-# rootless user-namespaced container can never get regardless of its own
-# AddCapability= lines, e.g. wg-easy's wg-quick. See quadlet_service.yml's
-# own comment for the full story.
+# Services that run as root, system-scope quadlets instead of rootless.
+# Escape hatch only -- see quadlet_service.yml.
 containerapps_quadlet_services_rootful: []
 
-# Kernel modules this host's quadlet services need loaded -- and
-# persisted across reboots via /etc/modules-load.d -- that aren't
-# guaranteed loaded already. E.g. a rootful WireGuard container's
-# wg-quick shells out to legacy `iptables -t nat`, which nftables-backend
-# distros like Rocky never auto-load on their own. Empty list is a no-op
-# everywhere else.
+# How many images to pull at once before starting quadlet services.
+containerapps_image_pull_parallelism: 6
+
+# Kernel modules to load now and at boot, e.g. the legacy iptables NAT
+# modules wg-quick needs, which Rocky's nftables kernel never auto-loads.
 containerapps_kernel_modules: []
 
-# Rootless podman's cgroup manager for the containers user. Leave as
-# "systemd" unless this host's sudo session isn't registered with
-# systemd-logind (no pam_systemd on the become path), which makes pod
-# creation fail with "cgroup is not set: internal libpod error" — set to
-# "cgroupfs" on those hosts instead.
+# Host packages a service needs beyond the container image, e.g.
+# kernel-modules for USB serial drivers on a device-passthrough host.
+containerapps_host_packages: []
+
+# udev rule lines for devices a service bind-mounts with AddDevice=,
+# written to /etc/udev/rules.d/90-containerapps.rules. Rootless
+# containers see the host's device permissions, so a rule typically
+# gives the device a stable SYMLINK and OWNER={{ containers_user }}.
+containerapps_udev_rules: []
+
+# SELinux booleans to set persistently, e.g. container_use_devices: true
+# for a host that passes a device into a container. Without it,
+# container_t can't even stat a usbtty_device_t node, and the denial is
+# dontaudit'd, so it only shows as EACCES inside the container.
+containerapps_selinux_booleans: {}
+
+# "cgroupfs" only for hosts where pod creation fails with "cgroup is not
+# set: internal libpod error" (become session not registered with logind).
 containerapps_cgroup_manager: systemd
 
-# Leave unset (the Linux default of 1024, i.e. only root can bind <1024)
-# unless a Network=host service on this host needs to bind a privileged
-# port as a rootless container -- e.g. caddy.container binding 80/443.
-# Rootless Podman containers run as "root" only inside their own user
-# namespace; under Network=host that's irrelevant, since the process ends
-# up sharing the *host's* real network namespace and is bound by the
-# host kernel's own unprivileged-port check instead, so it fails with no
-# clear error (Caddy's own log looks clean right up to the point it tries
-# to actually bind, then the whole process just exits 1). Set this to the
-# lowest port such a service needs, e.g. 80, rather than 0, to avoid
-# loosening the restriction for every unprivileged process on the host
-# any further than actually required.
+# Set to the lowest privileged port a rootless Network=host service must
+# bind (e.g. 80 for Caddy). Such a container shares the host's network
+# namespace, so the host's 1024 floor applies and the bind fails with an
+# unhelpful exit 1. Empty leaves the kernel default.
 containerapps_unprivileged_port_start: ""
+
+# Podman secrets (Secret= in a .container) for the containers user, as
+# [{name, value}], with each value from the vault. Missing ones are
+# created before any unit starts, since Podman won't start a container
+# whose secret doesn't exist. Existing ones are left alone. To rotate,
+# re-run with containerapps_podman_secrets_replace=true and restart the
+# units that mount them (plays/apps/stoa_secrets.yml does this for stoa).
+containerapps_podman_secrets: []
+containerapps_podman_secrets_replace: false
+
+# Directories a service needs beyond what the container-files sync
+# brings, keyed by service name and created only on hosts running that
+# service. Relative paths are under containerapps_dest; absolute paths
+# are created as root and handed to containers_user. mode defaults to
+# 0750.
+#
+# a+rwX is for services whose container process runs as a non-root uid:
+# under rootless Podman's UID mapping that uid isn't containers_user on
+# the host, so it only gets "other" permissions on the bind mount.
+containerapps_service_dirs:
+  # named writes .jnl journals here for acme-updater's dynamic updates.
+  dns:
+    - { path: dns/data/zones, mode: "a+rwX", recurse: true }
+  # rsyslogd creates per-sending-host directories here; its own
+  # $DirCreateMode/$FileCreateMode keep them readable by promtail.
+  syslog:
+    - { path: syslog/data/logs, mode: "a+rwX" }
+  # Kept outside the synced tree so a redeploy never touches repo data.
+  gitea:
+    - { path: /srv/gitea/data, mode: "a+rwX" }
+    - { path: /srv/gitea/config, mode: "a+rwX" }
+  # Also outside the synced tree: agentd's traces/logs/sessions and
+  # Garage's object store. agentd and Garage run as root in their
+  # containers, which rootless Podman maps to containers_user, so the
+  # default 0750 is enough. /srv/stoa/squid comes from
+  # containerapps_secret_files seeding squid.conf there.
+  stoa:
+    - { path: /srv/stoa/traces }
+    - { path: /srv/stoa/logs }
+    - { path: /srv/stoa/sessions }
+    - { path: /srv/stoa/garage/meta }
+    - { path: /srv/stoa/garage/data }
+  # Both Caddy builds bind-mount appdeploy-state; podman refuses to start
+  # a container whose bind-mount source is missing. caddy-route.sh
+  # (roles/appdeploy_caddy) writes the per-app routes.
+  caddy:
+    - { path: "{{ containers_home }}/appdeploy-state/caddy-apps" }
+  caddy-l4:
+    - { path: "{{ containers_home }}/appdeploy-state/caddy-apps" }
+    - { path: "{{ containers_home }}/appdeploy-state/ssh-apps" }

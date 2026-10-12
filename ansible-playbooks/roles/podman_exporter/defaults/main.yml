@@ -1,10 +1,5 @@
 ---
 podman_exporter_enabled: false
 
-containers_user: containers
-containers_home: /srv/containers
-
-# Same as roles/node_exporter's node_exporter_scrape_from -- see that
-# role's tasks/main.yml for the firewalld zone reasoning.
 podman_exporter_port: 9882
 podman_exporter_scrape_from: "{{ hostvars['metrics1'].ansible_host | default('') }}"

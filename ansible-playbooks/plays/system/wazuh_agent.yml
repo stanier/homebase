@@ -2,8 +2,7 @@
 - name: Enroll host with the Wazuh manager
   hosts: all
   become: true
-  # Every task here is per-host only, so let each host run ahead rather
-  # than wait at every task for the slowest one (linear's default).
+  # Per-host tasks only, so don't wait for the slowest host each step.
   strategy: free
 
   roles:

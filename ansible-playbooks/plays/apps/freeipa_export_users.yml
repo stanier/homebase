@@ -1,42 +1,16 @@
-# Exports FreeIPA user accounts -- identity attributes + group
-# memberships -- to a portable JSON file, for re-import into a
-# different FreeIPA installation (a different environment or site's own
-# realm) via freeipa_import_users.yml.
+# Exports FreeIPA users (identity attributes + group memberships) to a
+# portable JSON file for freeipa_import_users.yml in another realm.
+# Passwords can't come along (Kerberos keys are realm-specific and never
+# exposed), and uid/gid numbers are left for the target to assign.
+# freeipa_export_fields is an allow-list: IPA's full output is mostly
+# realm-internal state.
 #
-# Deliberately excludes anything that can't survive that trip:
-# Kerberos keys are derived from a realm-specific master key and are
-# never exposed by the IPA API at all (there is no "export the
-# password hash" option, unlike a plain Unix passwd/shadow file), and
-# uidnumber/gidnumber are left out too since two sites' ID ranges may
-# already overlap -- the target IPA just assigns its own on import,
-# same as any other freshly-created account. The attribute allow-list
-# below (freeipa_export_fields) is deliberate for the same reason: IPA's
-# "all" output also carries a pile of internal/operational attributes
-# (krb* Kerberos state, entryusn, nsaccountlock, memberofindirect_*,
-# ...) that are either meaningless outside the realm they came from or
-# actively wrong to copy across sites, so this whitelists the portable
-# subset instead of trying to enumerate everything to strip out.
-#
-# Talks to FreeIPA's own JSON-RPC API directly (ansible.builtin.uri)
-# rather than a CLI/Kerberos ticket dance -- there's no community.general
-# module for listing/searching users (ipa_user is create/modify/delete
-# only), so this hand-rolls the same login_password + session/json
-# calls that module_utils/_ipa.py makes under the hood for every other
-# ipa_* module in this repo. Runs on hosts: freeipa itself, same as
-# roles/freeipa's own bind-account task, so ipa_host resolves to the
-# server's own FQDN over loopback with no extra network hop.
-#
-# Run against a specific environment's freeipa host:
+# Uses the JSON-RPC API directly since no module lists users.
 #
 #   ansible-playbook --ask-vault-pass -i inventory/<env> \
-#     plays/apps/freeipa_export_users.yml \
-#     -e freeipa_export_file=/path/to/users.json
+#     plays/apps/freeipa_export_users.yml -e freeipa_export_file=/path/to/users.json
 #
-# freeipa_export_file defaults under inventory_dir so a forgotten
-# override never lands the export inside a tracked path by accident --
-# inventory/ is entirely gitignored (see README.md). The export
-# contains real names/emails/SSH keys, so treat the resulting file like
-# any other piece of PII, not like something safe to commit.
+# The default path is under the gitignored inventory/. The file is PII.
 - name: Export FreeIPA user accounts to a portable file
   hosts: freeipa
   become: false
@@ -73,9 +47,6 @@
       no_log: true
 
     - name: Fetch every user account's full attribute set
-      # params: [[""], {...}] -- an empty search string plus "all"
-      # matches every user, same as running `ipa user-find` with no
-      # arguments. sizelimit: 0 lifts IPA's default 100-entry find cap.
       ansible.builtin.uri:
         url: "https://{{ inventory_hostname }}.{{ base_domain }}/ipa/session/json"
         method: POST

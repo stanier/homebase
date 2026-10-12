@@ -1,16 +1,4 @@
 ---
-# Kernel Samepage Merging -- every VM here is a full clone of the same
-# rocky-10 template, so their kernels, systemd, sssd, the baked agents
-# and the shared container base layers are byte-identical pages KSM can
-# collapse into one copy on the host. Proxmox ships ksmtuned already, but
-# its stock KSM_THRES_COEF=20 only starts merging once free host memory
-# drops below 20%, i.e. after the node is already under pressure. Raising
-# it lets merging run in the background while there's still headroom.
-# Included as a pre_task from plays/system/update.yml for any host in
-# [proxmox], same self-healing pattern as repo_hygiene.yml.
-#
-# Check the effect with: cat /sys/kernel/mm/ksm/pages_sharing (x4 KiB
-# = memory saved).
 - name: Ensure ksmtuned is installed
   ansible.builtin.apt:
     name: ksmtuned

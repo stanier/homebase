@@ -15,10 +15,6 @@
   when: syslog_forward_enabled
 
 - name: Stop journald forwarding to the local syslog socket
-  # Avoids double-delivery: imjournal (below) reads the journal directly,
-  # so if journald *also* forwards to /dev/log, rsyslog's imuxsock module
-  # picks up a second copy of every message and we'd ship duplicates to
-  # the remote server.
   ansible.builtin.copy:
     dest: /etc/systemd/journald.conf.d/60-no-syslog-forward.conf
     owner: root
@@ -37,11 +33,8 @@
     group: root
     mode: "0644"
     content: |
-      # Managed by ansible-playbooks (roles/logging). Reads straight from
-      # the systemd journal, so this covers host system logs and podman's
-      # container logs alike -- podman's default log-driver writes
-      # container stdout/stderr into the same journal, journald doesn't
-      # separate them out by user.
+      # Managed by ansible-playbooks (roles/logging). imjournal covers
+      # host logs and podman container output alike.
       module(load="imjournal" StateFile="imjournal.state" ratelimit.interval="0")
 
       action(type="omfwd"

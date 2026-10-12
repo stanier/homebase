@@ -1,0 +1,20 @@
+[Unit]
+Description=Stoa squid (sole egress path for agentd's sandboxed MCP tool containers)
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/ubuntu/squid:6.6-24.04_beta
+Network=stoa-external.network
+# agentd's MCP_PROXY_ADDRESS points at this exact alias.
+NetworkAlias=stoa-squid
+# agentd overwrites this file with per-container subnet ACLs at startup;
+# the vendored default below is a deny-all fallback for before that happens.
+Volume=/srv/stoa/squid/squid.conf:/etc/squid/squid.conf:ro,z
+Volume=stoa_squid_cache:/var/spool/squid
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

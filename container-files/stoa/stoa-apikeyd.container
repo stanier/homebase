@@ -1,0 +1,27 @@
+[Unit]
+Description=Stoa apikeyd (API key management -- issues stoa-infgw_* keys for inference-gateway)
+After=network-online.target stoa-postgres-apikeyd.service stoa-authd.service
+Wants=network-online.target
+Requires=stoa-postgres-apikeyd.service
+
+[Container]
+Image=stoa-apikeyd.build
+Network=stoa-db-apikeyd.network
+Network=stoa-external.network
+NetworkAlias=apikeyd
+PublishPort=8889:8889
+Environment=APIKEYD_AUTHD_URL=http://authd:8888
+# APIKEYD_DATABASE_URL, APIKEYD_EXTERNAL_URL, APIKEYD_ADMIN_TOKEN come from .env.
+EnvironmentFile=/srv/containers/container-files/stoa/.env
+Volume=/srv/containers/container-files/stoa/data/config/apikeyd.yaml:/etc/apikeyd/config.yaml:ro,z
+Exec=-config /etc/apikeyd/config.yaml
+HealthCmd=wget -qO- http://localhost:8889/healthz || exit 1
+HealthInterval=10s
+HealthTimeout=5s
+HealthRetries=6
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

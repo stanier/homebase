@@ -1,0 +1,23 @@
+[Unit]
+Description=Stoa apikeyd PostgreSQL
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/library/postgres:16-alpine
+Network=stoa-db-apikeyd.network
+NetworkAlias=postgres-apikeyd
+Environment=POSTGRES_USER=apikeyd
+Environment=POSTGRES_DB=apikeyd
+EnvironmentFile=/srv/containers/container-files/stoa/postgres-apikeyd.env
+Volume=stoa_postgres_apikeyd:/var/lib/postgresql/data
+HealthCmd=pg_isready -U apikeyd
+HealthInterval=5s
+HealthTimeout=5s
+HealthRetries=10
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

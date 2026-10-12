@@ -35,19 +35,20 @@ collections/    external Galaxy collection pins
 
 | Role | Purpose |
 |---|---|
-| `common` | Baseline every host gets: root password, `automation` service account, root CA trust |
-| `boxship` | Shared provisioning base most other roles depend on |
-| `hypervisor` | Proxmox: golden template builds, legacy (non-Tofu) VM create/delete, snapshots, repo hygiene |
-| `management_network` | Brings up the mgmt VLAN interface/routing on a VM |
-| `firewall` | Host firewall rules |
-| `containerapps` | Syncs `container-files` onto `[containers]` hosts and runs it as systemd Quadlet units |
-| `appdeploy` / `appdeploy_caddy` | Forced-command CI deploy key + Gitea Actions wiring for app repos; Caddy vhost generation |
-| `backup` | Daily restic backups of container volumes/bind-mounts, per host |
-| `mail_server` / `postfix` | Native mail stack, pairs with `container-files/dovecot` + `roundcube` |
-| `logging` | Central logging setup |
-| `node_exporter` / `podman_exporter` | Prometheus exporters for non-container-managed hosts |
-| `tailscale` | Tailscale enrollment |
-| `workstation` | Personal workstation provisioning (not fleet infra) |
+| `common` | Baseline for every host: hostname, root password, `automation` account, base packages, root CA trust, internal DNS; also package updates |
+| `boxship` | The rootless-podman `containers` user every container role builds on |
+| `containerapps` | Syncs `container-files` onto `[containers]` hosts and runs it as Quadlet units |
+| `appdeploy` / `appdeploy_caddy` | CI deploys of app repos to app-host, and their Caddy routes |
+| `hypervisor` | Proxmox: golden templates, snapshots, reboots, node upkeep |
+| `management_network` | Moves sshd and firewalld onto a VM's management NIC |
+| `firewall` | firewalld rules |
+| `freeipa` / `freeipa_client` | Native FreeIPA server; SSSD enrollment for IPA-backed SSH logins |
+| `mail_server` / `postfix` | Receiving MTA on mail1 (with the dovecot/roundcube containers); relay satellites everywhere else |
+| `logging` / `auditd` / `wazuh_agent` | Remote syslog, audit rules, Wazuh agent enrollment |
+| `node_exporter` / `podman_exporter` | Prometheus exporters scraped by metrics1 |
+| `ssh_config` | Writes `~/.ssh/config.d/homebase-<env>.conf` on the operator's machine |
+| `backup` | Restic backups of container volumes -- not wired into any play yet |
+| `workstation` | Empty placeholder |
 
 ## Running things
 
@@ -64,20 +65,18 @@ vault prompt covering all of it:
 ./testrun.sh
 ```
 
-(`testrun.sh` targets `dangerzone` against a fixed host list and passes
-`containerapps_source=local` so it deploys from a local `container-files`
-checkout instead of pulling from Gitea.)
+(`testrun.sh` targets `dangerzone` with a fixed host list; pass `--clean`
+to destroy and recreate the VMs first. Extra arguments go to
+`ansible-playbook`, e.g. `--tags podman`.)
 
 ## Read next
 
-- [Typical procedure](Typical_Procedure.md) — creating a new VM
-  (Tofu-first, legacy Ansible-only as fallback), VM maintenance/
-  snapshots, restoring a container host after a wipe.
+- [Typical procedure](Typical_Procedure.md) — play order for a new
+  environment, golden templates, new VMs, VM maintenance, FreeIPA user
+  moves and FreeIPA-backed SSH access.
 - [Vault & secrets](VAULT.md) — Ansible Vault conventions, every secret
   in the fleet and where it's consumed, the `automation` service
   account.
-- [Package management](PACKAGE_MANAGEMENT.md) — package manager
-  coverage status for the update plays.
 - [Gitea Actions](GITEA_ACTIONS.md) — gitea-runner DNS/SELinux
   gotchas, appdeploy CI setup and debugging, referencing private
   action repos from a workflow.

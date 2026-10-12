@@ -9,7 +9,7 @@ up to run this by hand today, see plays/provision_vms.yml's own comment
 for how a Tofu-driven Ansible run passes the real one through) instead of
 it being duplicated as Tofu literals: ansible_host/management_ip/app_ip/
 proxmox_vmid from hosts.ini's [vm] lines, the proxmox_vm block (node/
-template/cores/memory/memory_min/disk_resize), proxmox_enabled/proxmox_protected
+template/cores/memory/memory_min/disk_resize/usb_mappings), proxmox_enabled/proxmox_protected
 and app_network_prefix/management_network_prefix from group_vars/vm.yml,
 overridden per-host by host_vars/<name>.yml.
 
@@ -35,7 +35,8 @@ silently the same way.
 stdin: the `external` data source's query object (ignored, no inputs
 needed here). stdout: {"json": "<hostname -> {node,
 template, cores, memory, memory_min, disk_resize, enabled, protected, vmid, app_ip,
-management_ip, management_network, app_network_prefix, management_network_prefix}
+management_ip, management_network, app_network_prefix, management_network_prefix,
+usb_mappings}
 as a JSON string>"} -- `external` only allows string
 values in its result, so the real payload is nested one level down and
 locals.tf jsondecode()s it back out.
@@ -184,6 +185,14 @@ def main():
             "app_network_prefix": int(hv.get("app_network_prefix", 24)),
             "management_network_prefix": int(hv.get("management_network_prefix", 24)),
         }
+        usb_mappings = vm.get("usb_mappings", [])
+        if not isinstance(usb_mappings, list) or not all(isinstance(m, str) for m in usb_mappings):
+            print(f"{name}'s proxmox_vm.usb_mappings must be a list of mapping names", file=sys.stderr)
+            sys.exit(1)
+        # Proxmox resource mapping names (Datacenter → Resource Mappings
+        # → USB) to pass through, e.g. ["meshcore"].
+        host["usb_mappings"] = usb_mappings
+
         if vm.get("disk_resize") is not None:
             host["disk_resize"] = vm["disk_resize"]
 

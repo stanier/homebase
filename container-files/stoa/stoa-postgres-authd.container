@@ -1,0 +1,23 @@
+[Unit]
+Description=Stoa authd PostgreSQL
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/library/postgres:16-alpine
+Network=stoa-db-authd.network
+NetworkAlias=postgres-authd
+Environment=POSTGRES_USER=authd
+Environment=POSTGRES_DB=authd
+EnvironmentFile=/srv/containers/container-files/stoa/postgres-authd.env
+Volume=stoa_postgres_authd:/var/lib/postgresql/data
+HealthCmd=pg_isready -U authd
+HealthInterval=5s
+HealthTimeout=5s
+HealthRetries=10
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

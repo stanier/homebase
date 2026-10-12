@@ -35,11 +35,6 @@ protections exist that the README doesn't mention.
   environment's state — there's no safety check preventing it from
   taking out every VM in that workspace. Always scope with `-target`
   and read the plan output first.
-- Don't run this tool and the legacy Ansible-native path
-  (`plays/legacy_create_vm.yml`/`legacy_delete_vm.yml` in
-  `ansible-playbooks`) against the same VM in parallel — whichever one
-  didn't make the most recent change has a stale view of that VM's
-  state.
 - Provider (`bpg/proxmox`) import-ID syntax has changed between
   releases — check `environments/.terraform.lock.hcl` for the actual
   pinned version before trusting README import examples verbatim.

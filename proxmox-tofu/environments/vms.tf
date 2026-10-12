@@ -20,6 +20,8 @@ module "vm" {
 
   disk_size = each.value.disk_size
 
+  usb_mappings = each.value.usb_mappings
+
   app_bridge  = local.nodes[each.value.node].app_bridge
   app_ip      = each.value.app_ip
   app_gateway = local.nodes[each.value.node].app_gateway

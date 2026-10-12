@@ -32,6 +32,23 @@ containers) don't inherit the host resolver by default — both the
 runner service and the ephemeral job containers it spawns needed an
 explicit DNS fix. See `ansible-playbooks/docs/GITEA_ACTIONS.md`.
 
+## Package mirror
+
+**`pkgmirror`** (`container-files/pkgmirror`) is a pull-through cache
+(nginx `proxy_cache`) for the fleet's dnf and apt repos: Rocky, EPEL,
+Debian, Debian security and Proxmox. It only stores what's been asked
+for. `ansible-playbooks`' `common` role points clients at it whenever
+`package_mirror_url` is set:
+
+- **dnf**: each Rocky/EPEL `baseurl` is rewritten to the mirror first and
+  upstream second, with `mirrorlist`/`metalink` commented out.
+- **apt** (the Proxmox nodes): an `Acquire::http::Proxy-Auto-Detect`
+  hook sends `http://` sources for those upstreams through the mirror,
+  but only while it's answering.
+
+If the mirror is down, hosts fall back to upstream, so installs and
+updates are slower, not broken.
+
 ## Edge and identity
 
 - **Caddy** (`container-files/caddy`) terminates TLS for every public

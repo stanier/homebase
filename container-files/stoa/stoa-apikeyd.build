@@ -1,0 +1,38 @@
+[Unit]
+Description=Build stoa apikeyd image
+# Ordered after the rest of the stoa-*.build chain (see each unit's own
+# spot in the sequence) so systemd never runs more than one `podman
+# build` at a time for this stack. All 7 targets share one Containerfile
+# and context, so without this, starting several stoa-*.container units
+# in the same run can trigger their .build dependencies concurrently --
+# confirmed in practice as multiple simultaneous first-time Go/Node
+# compiles starving each other of CPU/memory on a 4-core/4GB VM, slow
+# enough to blow even a raised TimeoutStartSec. After= only orders them
+# (no Requires=), so a failure in one doesn't cascade into the others
+# being considered failed too.
+After=stoa-agentd-build.service
+
+[Build]
+ImageTag=localhost/stoa-apikeyd
+File=Containerfile
+Target=apikeyd
+# A git URL here (rather than a local path onto the synced
+# container-files tree) is deliberate: the Containerfile's COPY
+# instructions need stoa's actual application source (go.mod, cmd/,
+# internal/, web/, ...), which this repo never vendors -- container-files
+# only holds Quadlet units/config, not application code (see
+# container-files/AGENTS.md). podman build clones this URL fresh as the
+# build context on every build; #main floats with upstream's default
+# branch -- pin to a specific commit instead if these builds ever need to
+# stop moving when upstream does.
+SetWorkingDirectory=https://github.com/stanier/stoa.git#main
+
+# 90s (systemd's DefaultTimeoutStartSec) isn't remotely enough for a cold
+# multi-binary Go compile -- this is what actually caused "A dependency
+# job for stoa-<x>.service failed" on first deploy: the .build unit got
+# killed mid-compile, so every container Requires=-ing it failed too.
+# 3600s is generous on purpose; once the shared `builder` stage layer is
+# cached (see stoa-agentd.build, first in the chain), every build after
+# it finishes in seconds.
+[Service]
+TimeoutStartSec=3600

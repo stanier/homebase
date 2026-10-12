@@ -1,0 +1,39 @@
+[Unit]
+Description=MeshCore companion radio MQTT gateway
+After=network-online.target mosquitto.service
+Wants=network-online.target mosquitto.service
+# The container can't start while the radio is unplugged (AddDevice=
+# needs the node), so keep retrying instead of hitting systemd's start
+# limit and giving up.
+StartLimitIntervalSec=0
+
+[Container]
+Image=meshcore-gateway.build
+Network=meshcore.network
+# The radio: Proxmox's "meshcore" USB mapping, passed into the VM by
+# proxmox-tofu (proxmox_vm.usb_mappings). host_vars/meshcore1.yml's
+# udev rule names it /dev/meshcore whether it enumerates as ttyUSB or
+# ttyACM, and hands it to the containers user. It also turns on the
+# container_use_devices SELinux boolean, without which the container
+# gets EACCES on the device with nothing in the audit log.
+AddDevice=/dev/meshcore:/dev/meshcore
+# The image has no USER, so the gateway runs as container root -- under
+# rootless Podman that's the containers user on the host, which is what
+# the udev rule makes the device's owner.
+Environment=MESHCORE_SERIAL_PORT=/dev/meshcore
+Environment=MQTT_HOST=mosquitto
+Environment=MQTT_USERNAME=meshcore-gateway
+Environment=GATEWAY_ENABLE_ADMIN=true
+# MQTT_PASSWORD, from containerapps_env.
+EnvironmentFile=/srv/containers/container-files/meshcore/.env
+HealthCmd=python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4)"
+HealthInterval=30s
+HealthStartPeriod=30s
+HealthRetries=3
+
+[Service]
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target

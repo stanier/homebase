@@ -1,41 +1,4 @@
 ---
-# Included once per containerapps_quadlet_service. A service's directory may
-# own more than one quadlet unit -- e.g. caddy's caddy.build +
-# caddy.container, or authentik's postgresql/redis/server/worker.container
-# plus authentik.network -- so this discovers and syncs all of them rather
-# than assuming a single <service>.container file.
-#
-# Only *.container/*.pod files produce a directly-startable <name>.service;
-# *.network/*.volume/*.build units are pulled in automatically as
-# dependencies by whichever .container/.pod references them, so they're
-# synced but never started directly here.
-#
-# containerapps_quadlet_service_enabled (default true) controls whether any
-# of a service's units actually get started/restarted here. Set it false for
-# a service whose unit file(s) should be deployed but left stopped -- e.g.
-# one that's expensive to run and not currently wanted. Pair that with
-# omitting the unit's own [Install] section so it also doesn't get
-# auto-started at boot.
-#
-# A restart also fires when containerapps_quadlet_data_changed (computed
-# once in main.yml from a git diff of this update) includes this service --
-# covers bind-mounted config that isn't itself a quadlet unit file, e.g.
-# dns/data/named.conf, which the per-file sync-changed check below can't see.
-#
-# containerapps_quadlet_services_rootful opts a service out of all of the
-# above and into a genuine root, system-scope quadlet instead -- for a
-# service whose upstream image needs kernel-level CAP_NET_ADMIN/NAT
-# manipulation that a rootless user-namespaced container can't get no
-# matter what AddCapability= says in its own unit (confirmed for wg-easy:
-# `wg-quick`'s `iptables -t nat` fails "Permission denied (you must be
-# root)" under rootless Podman even with NET_ADMIN/SYS_MODULE granted,
-# since those capabilities only apply inside the container's own nested
-# user namespace, not the host's initial one that actually owns the
-# netfilter tables). Unit files land in /etc/containers/systemd (root:root)
-# instead of the containers user's own ~/.config/containers/systemd, and
-# every systemd/copy task below runs as real root at system scope instead
-# of becoming containers_user at user scope.
-
 - name: "Determine whether {{ containerapps_quadlet_service }} runs rootful"
   ansible.builtin.set_fact:
     containerapps_quadlet_rootful: "{{ containerapps_quadlet_service in containerapps_quadlet_services_rootful }}"
@@ -71,36 +34,21 @@
     label: "{{ item.path | basename }}"
   register: containerapps_quadlet_service_sync
 
-- name: "Reload systemd daemon for {{ containerapps_quadlet_service }}"
-  ansible.builtin.systemd:
-    daemon_reload: true
-    scope: "{{ containerapps_quadlet_scope }}"
-  become_user: "{{ omit if containerapps_quadlet_rootful else containers_user }}"
-  environment: "{{ containerapps_quadlet_environment }}"
-
-- name: "Start or restart {{ containerapps_quadlet_service }} units"
-  ansible.builtin.systemd:
-    name: "{{ (item.item.path | basename).rsplit('.', 1)[0] }}.service"
-    scope: "{{ containerapps_quadlet_scope }}"
-    # Restarts if this unit file itself changed, OR if anything else in the
-    # service's directory changed (bind-mounted config, etc. -- see
-    # containerapps_quadlet_data_changed in main.yml).
-    state: >-
-      {{ 'restarted'
-         if (item.changed or containerapps_quadlet_service in (containerapps_quadlet_data_changed | default([])))
-         else 'started' }}
-  become_user: "{{ omit if containerapps_quadlet_rootful else containers_user }}"
-  environment: "{{ containerapps_quadlet_environment }}"
-  loop: "{{ containerapps_quadlet_service_sync.results }}"
-  loop_control:
-    label: "{{ item.item.path | basename }}"
-  when:
-    - containerapps_quadlet_service_enabled | default(true)
-    - item.item.path.endswith('.container') or item.item.path.endswith('.pod')
-  # Transient right after loginctl enable-linger first takes effect: the old
-  # (pre-linger) user manager instance can still have exit.target mid-
-  # transaction, colliding with this start job. Retries clear it in practice.
-  register: containerapps_quadlet_service_start
-  retries: 3
-  delay: 3
-  until: containerapps_quadlet_service_start is succeeded
+- name: "Queue {{ containerapps_quadlet_service }} units for starting"
+  # main.yml reloads systemd once per scope and starts everything queued
+  # here afterwards, instead of a daemon-reload per service. Disabled
+  # services are queued too (enabled: false) so they're synced but skipped.
+  ansible.builtin.set_fact:
+    containerapps_quadlet_units: >-
+      {%- set units = containerapps_quadlet_units | default([]) | list -%}
+      {%- for result in containerapps_quadlet_service_sync.results
+            if result.item.path.endswith('.container') or result.item.path.endswith('.pod') -%}
+      {%- set _ = units.append({
+            'unit': (result.item.path | basename).rsplit('.', 1)[0] + '.service',
+            'rootful': containerapps_quadlet_rootful,
+            'enabled': containerapps_quadlet_service_enabled | default(true),
+            'restart': result.changed
+                       or containerapps_quadlet_service in (containerapps_quadlet_data_changed | default([])),
+          }) -%}
+      {%- endfor -%}
+      {{ units }}

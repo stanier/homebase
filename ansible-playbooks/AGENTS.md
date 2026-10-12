@@ -26,22 +26,20 @@ that deal with VM lifecycle or secrets.
 - `roles/containerapps` is what syncs `../container-files` onto
   `[containers]` hosts — changes to Quadlet units there take effect via
   this role's next run, not by editing anything in this repo.
-- VM creation/deletion is `../proxmox-tofu`'s job now
-  (`roles/hypervisor`'s `legacy_create_vm.yml`/`legacy_delete_vm.yml`
-  are a fallback only — see that repo's README before reaching for
-  them).
+- VM creation/deletion is `../proxmox-tofu`'s job; `roles/hypervisor`
+  only builds the templates it clones from, plus snapshots, reboots and
+  Proxmox node upkeep.
 - `testrun.sh` runs the full provision → onboard → deploy sequence
-  against `dangerzone` with a fixed host list and
-  `containerapps_source=local`; it's the fast path for testing a change
-  end-to-end from a local checkout, not a generic entry point.
+  (`plays/testrun.yml`) against `dangerzone` with a fixed host list.
+  Both environments set `containerapps_source: local`, so it deploys
+  your local `container-files` checkout. It's the fast path for testing
+  a change end-to-end, not a generic entry point.
 
 ## Before making changes
 
 - Read `docs/Typical_Procedure.md` before any VM lifecycle or
   host-restore work.
 - Read `docs/VAULT.md` before adding, moving, or consuming a secret.
-- Check `docs/PACKAGE_MANAGEMENT.md` before touching the update plays'
-  package-manager handling.
 - Read `docs/GITEA_ACTIONS.md` before touching `roles/containerapps`'
   gitea-runner service, `roles/appdeploy`/`roles/appdeploy_caddy`, or
   debugging a Gitea Actions workflow failure -- covers rootless-Podman

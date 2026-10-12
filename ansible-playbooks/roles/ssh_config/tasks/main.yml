@@ -1,11 +1,6 @@
 ---
-# Local-only role: turns the current environment's inventory into SSH
-# config Host entries for the operator's own ~/.ssh/config, so e.g.
-# `ssh gitea.{{ ssh_config_env }}` works without hand-maintaining a
-# separate config. Every task here targets localhost regardless of
-# which inventory host the play is looping over -- it never connects
-# to the fleet itself, which is also why plays/system/ssh_config.yml
-# can skip fact-gathering entirely.
+# Writes the operator's ~/.ssh/config.d entries for this environment's
+# inventory, e.g. `ssh gitea.testzone`. Runs entirely on localhost.
 
 - name: Ensure ~/.ssh/config.d exists
   ansible.builtin.file:
@@ -17,11 +12,7 @@
   become: false
   run_once: true
 
-# Per-host connection settings, extracted once so the template doesn't
-# have to re-derive ProxyCommand from ansible_ssh_common_args itself.
-# HostName is deliberately the only thing that stays purely per-host --
-# everything else here is a candidate for hoisting into a shared group
-# or *.{{ ssh_config_env }} block below, whenever hosts share a value.
+# HostName stays per host; every other setting is grouped below.
 - name: Build per-host connection facts
   ansible.builtin.set_fact:
     ssh_config_hosts: "{{ ssh_config_hosts | default([]) + [{
@@ -41,9 +32,7 @@
   become: false
   run_once: true
 
-# A field only belongs in the *.{{ ssh_config_env }} block if literally
-# every host agrees on it (a single unique, non-blank value) -- these
-# four map 1:1 onto ssh_config_hosts' non-hostname keys.
+# A setting goes in the *.<env> block only if every host shares it.
 - name: Determine connection settings shared by every host
   ansible.builtin.set_fact:
     ssh_config_common_user: "{{ ssh_config_hosts | map(attribute='user') | unique | list }}"
@@ -55,13 +44,8 @@
   become: false
   run_once: true
 
-# Tag each host with a 'profile' -- the subset of its settings that
-# *aren't* already fleet-wide-common -- so the template can group hosts
-# sharing a profile into one "Host a.zone b.zone" block instead of
-# repeating User/IdentityFile/ProxyCommand/Port per host. Blank slots in
-# a profile mean "nothing group-specific to set here" (either the field
-# is common-to-all and already covered by the wildcard block, or this
-# host just doesn't set it).
+# Each host's "profile" is its settings that aren't fleet-wide, so the
+# template can emit one Host block per group of hosts sharing one.
 - name: Tag each host with its non-shared connection profile
   ansible.builtin.set_fact:
     ssh_config_hosts_profiled: "{{ ssh_config_hosts_profiled | default([]) + [h | combine({'profile': [
@@ -99,9 +83,7 @@
 - name: Generate SSH config entries for appdeploy ssh-type apps
   ansible.builtin.include_tasks: apps.yml
 
-# Include must come before any conflicting Host block for its entries
-# to take priority (ssh_config uses first-match-wins), hence BOF --
-# harmless if the user's own config never defines the same aliases.
+# ssh_config is first-match-wins, so the Include goes first.
 - name: Ensure ~/.ssh/config includes config.d/*.conf
   ansible.builtin.lineinfile:
     path: "{{ ssh_config_main }}"

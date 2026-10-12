@@ -1,0 +1,18 @@
+[Unit]
+Description=Stoa agentd DB migrations (one-shot, runs before stoa-agentd)
+After=network-online.target stoa-postgres-agentd.service
+Wants=network-online.target
+Requires=stoa-postgres-agentd.service
+
+[Container]
+Image=stoa-auth-admin.build
+Network=stoa-db-agentd.network
+EnvironmentFile=/srv/containers/container-files/stoa/.env
+Exec=agentd migrate up
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=default.target

@@ -1,13 +1,20 @@
 # Managed by container-files/wazuh. Copied verbatim from
 # wazuh/wazuh-indexer:4.14.7's stock opensearch.yml (extracted via
 # `podman run --rm --entrypoint cat wazuh/wazuh-indexer:4.14.7
-# .../config/opensearch.yml`), with two changes:
+# .../config/opensearch.yml`), with three changes:
 #   - node.name: wazuh.indexer -> wazuh-indexer (our Quadlet network
 #     alias -- avoids a dot in a name other Wazuh services will refer
 #     to by hostname).
 #   - plugins.security.nodes_dn: demo.indexer -> wazuh-indexer, so it
 #     matches the CN the TLS bootstrap (docs/VAULT.md's Wazuh section)
 #     should mint the indexer's own cert with.
+#   - plugins.security.allow_default_init_securityindex: true (added
+#     below). The image's entrypoint has its securityadmin auto-run
+#     commented out, so without this a fresh data volume never gets a
+#     .opendistro_security index and the dashboard sits at "server is
+#     not ready yet". It only seeds an *absent* index: later edits to
+#     internal_users.yml still need a manual securityadmin run (see
+#     ansible-playbooks/docs/VAULT.md's Wazuh section).
 # admin_dn stays "CN=admin,..." -- that's the CN wazuh-certs-tool mints
 # for the admin cert (admin.pem/admin-key.pem) by convention; keep it
 # matching whatever the actual cert bootstrap produces.
@@ -36,6 +43,7 @@ plugins.security.ssl.http.enabled_protocols:
   - "TLSv1.2"
 plugins.security.authcz.admin_dn:
 - "CN=admin,OU=Wazuh,O=Wazuh,L=California,C=US"
+plugins.security.allow_default_init_securityindex: true
 plugins.security.check_snapshot_restore_write_privileges: true
 plugins.security.enable_snapshot_restore_privilege: true
 plugins.security.nodes_dn:

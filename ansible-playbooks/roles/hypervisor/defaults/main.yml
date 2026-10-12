@@ -1,70 +1,13 @@
 ---
-# Proxmox API auth. user/token_id are just identifiers, shared across
-# nodes as long as the same user/token-id names were created on each --
-# but they live in each environment's group_vars/proxmox.yml, not as
-# role defaults here: legacy_create_vm.yml looks them up via
-# hostvars[proxmox_vm.node] for a node that may not itself be a target
-# of the current run (e.g. -l <newhost> only), and role defaults are
-# only merged into a host's vars when that host actually runs the role
-# in this play -- group_vars apply to every inventory host regardless.
-# proxmox_api_token_secret is the actual secret and has no default here
-# -- turkey/homelab aren't clustered, so each has its own independent
-# user/token database, and it's wired to the vault per-node instead, in
-# host_vars/turkey.yml / host_vars/homelab.yml (see docs/VAULT.md).
-
-# Self-signed cert on the Proxmox web UI/API in this homelab -- flip to
-# true if that ever changes (a real cert, or a CA these control-node
-# calls trust).
 proxmox_api_validate_certs: false
 
-# HTTP client read timeout for every community.proxmox.* call in this
-# role (proxmoxer's own default is 5s, way too tight for calls like
-# "Configure cloud-init networking and login" that trigger a real config
-# write on the Proxmox node -- under load, e.g. testrun.sh hitting one
-# node with 6 hosts' worth of these calls back to back, pveproxy can
-# take longer than 5s just to respond, which read_timeout can't tell
-# apart from the node actually being stuck. This is only the per-HTTP-
-# call timeout, unrelated to the "timeout:" param some tasks also set
-# (e.g. the clone task's timeout: 300), which is proxmox_kvm's own
-# separate long-poll wait for a Proxmox task (clone/stop/etc) to finish.
+proxmox_controller_python: >-
+  {{ (lookup('env', 'VIRTUAL_ENV') ~ '/bin/python3')
+     if lookup('env', 'VIRTUAL_ENV')
+     else ansible_playbook_python }}
+
 proxmox_api_timeout: 30
 
-# Packages baked into the staged image (via virt-customize) before it's
-# imported as a template's boot disk, keyed by each template's own
-# os_family (see proxmox_templates' os_family field). Every clone of
-# that template then already has these on first boot, instead of paying
-# their install cost (repo metadata + download) again on every single
-# VM every time the common/node_exporter/auditd roles run.
-#
-# Deliberately only packages that are (a) installed on literally every
-# host regardless of group -- see common/tasks/version_control.yml,
-# acl.yml, enable_epel.yml, node_exporter_enabled/auditd_enabled's
-# defaults, and roles/postfix + roles/mail_server between them covering
-# every host -- or (b) opt-in but common enough that the install cost
-# outweighs a disabled unit sitting on hosts that don't use it (see
-# proxmox_template_bake_disabled_services below), and in either case a
-# plain package install with no per-host state tied to the moment of
-# installation. qemu-guest-agent is there because build_template.yml
-# sets agent: true on every template, and Proxmox's graceful shutdown
-# (Tofu's destroy path for non-testzone VMs) goes through the agent --
-# the Debian genericcloud image doesn't ship it.
-#
-# postfix is RedHat-only: Debian's postinst wants a debconf answer
-# roles/postfix/mail_server preseed per host, so it stays a role-time
-# install there. tailscale/wazuh-agent are deliberately left out:
-# tailscale is rare enough not to be worth it, and wazuh-agent's %post
-# script does live enrollment against the manager using install-time
-# env vars, so pre-baking it would decouple "installed" from "enrolled"
-# in a way roles/wazuh_agent doesn't expect.
-#
-# Order matters within each list -- virt-customize runs --install
-# operations in the order given, and epel-release has to land before
-# node-exporter can be resolved from it.
-#
-# The relevant Ansible roles still own configuration/state (services,
-# config files, enable/disable) and still run their own package task
-# every time -- against an already-installed package that's just a fast
-# no-op check, not a real install.
 proxmox_template_bake_packages:
   RedHat:
     - epel-release
@@ -83,19 +26,6 @@ proxmox_template_bake_packages:
     - qemu-guest-agent
     - firewalld
 
-# Units disabled in the baked image after the installs above, keyed by
-# os_family like proxmox_template_bake_packages (a unit that doesn't
-# exist in that family's image fails the whole virt-customize run).
-#
-# firewalld is opt-in (roles/firewall's firewall_enabled defaults to
-# false) -- baked so the hosts that do enable it skip a multi-minute
-# install, but disabled here so the hosts that don't never end up with
-# a firewall they didn't ask for. roles/firewall enables/starts it
-# itself when firewall_enabled is set.
-#
-# dnf-makecache.timer fires shortly after every boot and was ~30s of
-# each Rocky clone's boot; every role that installs anything refreshes
-# metadata itself anyway.
 proxmox_template_bake_disabled_services:
   RedHat:
     - firewalld
@@ -103,26 +33,6 @@ proxmox_template_bake_disabled_services:
   Debian:
     - firewalld
 
-# Packages the upstream cloud image ships that are dead weight on a
-# single-purpose VM, removed in the bake after the installs above (same
-# os_family keying). common/tasks/trim_base_packages.yml removes the
-# same set from hosts cloned before this existed.
-#
-# - kdump-utils: reserves crashkernel= RAM in every guest (192M under
-#   4G, 256M above) for crash dumps nobody collects, and kdump.service
-#   was ~35s of every boot. Uninstalled rather than just disabled
-#   because its 92-crashkernel.install hook (auto_reset_crashkernel)
-#   writes crashkernel= back onto every newly installed kernel --
-#   build_template.yml strips the existing argument separately.
-# - udisks2: desktop/removable-disk management daemon.
-# - cockpit*: Rocky's cloud image ships the web console (cockpit-ws,
-#   -bridge, -system) socket-activated on :9090. Everything here is
-#   managed through Ansible, so it's only attack surface. Globbed since
-#   the subpackage set differs between EL releases.
-#
-# Nothing in either image depends on these (rpm -q --whatrequires).
-# fwupd can't go the same way -- on EL10 it Provides dbxtool, which the
-# dnf-protected shim-x64 requires -- so it's masked instead (below).
 proxmox_template_bake_uninstall_packages:
   RedHat:
     - kdump-utils
@@ -130,185 +40,28 @@ proxmox_template_bake_uninstall_packages:
     - cockpit*
   Debian: []
 
-# Units masked (not just disabled) in the baked image -- for packages
-# that have to stay installed but should never run. fwupd (firmware
-# updates for hardware a VM doesn't have) is D-Bus-activated, and
-# fwupd-refresh.timer pulled it in hourly; masking both stops either
-# path. common/tasks/trim_base_packages.yml masks the same units on
-# existing hosts.
 proxmox_template_bake_masked_services:
   RedHat:
     - fwupd.service
     - fwupd-refresh.timer
   Debian: []
 
-# Lines appended to the baked image's /etc/dnf/dnf.conf (RedHat only --
-# the stock file is a lone [main] section, so appending lands in it).
-# common/tasks/dnf_tuning.yml enforces the same settings on hosts cloned
-# before this existed. dnf's default of 3 parallel downloads is most of
-# why a fresh clone's first full upgrade is slow.
 proxmox_template_dnf_conf_lines:
   - max_parallel_downloads=10
 
-# Set true (-e proxmox_template_rebuild=true) to have build_templates.yml
-# delete and rebuild every completed template, not just build missing
-# ones -- see that file's header.
 proxmox_template_rebuild: false
 
-# proxmox_templates (the key -> {image_url, vmid, ostype, ssh_user,
-# os_family} map consumed by
-# build_templates.yml/build_template.yml/legacy_create_vm.yml) has no
-# default here -- it lives per-environment in
-# inventory/<env>/group_vars/proxmox/templates.yml, so testzone and
-# dangerzone can each maintain their own set of golden templates.
-# os_family must be one of proxmox_template_bake_packages' keys above
-# (RedHat/Debian) -- build_template.yml's baking step is skipped
-# entirely for a template whose os_family isn't in that map.
-
-# Display type legacy_create_vm.yml sets on every new clone -- deliberately
-# different from the template's own vga: serial0 (build_template.yml),
-# since a template only needs a serial console to build cleanly, but a
-# real VM's first boot is exactly when you want a normal display to
-# debug against (cloud-init hangs, network misconfig, etc.) rather than
-# relying on a serial getty the guest may not have brought up yet.
-# "std" works with Proxmox's own noVNC console with no extra guest
-# drivers; switch to "qxl" (+ SPICE) if you want copy/paste and better
-# resolution and don't mind installing spice-vdagent in the guest.
-# Override per-VM via proxmox_vm.vga in host_vars if a specific host
-# needs something else.
-proxmox_vm_vga: std
-
-# Emulated CPU type for both golden templates (build_template.yml) and
-# every clone of them (legacy_create_vm.yml) -- kvm64 (Proxmox/QEMU's own
-# default) is a lowest-common-denominator baseline missing instruction
-# sets modern guest kernels/software increasingly assume are there,
-# which is what's causing the breakage. "host" passes the hypervisor's
-# actual CPU straight through instead, at the cost of losing
-# migration/live-migration compatibility across nodes with different
-# CPUs -- turkey/homelab aren't clustered, so that tradeoff doesn't
-# apply here. Override per-VM via proxmox_vm.cpu in host_vars if a
-# specific host ever needs a different type.
 proxmox_vm_cpu: host
 
-# Bridges new VM NICs attach to -- net0 is the app-serving VLAN (a new
-# VM's primary NIC, carrying app_ip, same as every existing host -- see
-# the comment at the top of inventory/*/hosts.ini), net1 the management
-# VLAN (management_ip; roles/management_network takes over on that
-# interface once the host is up). Left unset on purpose: set these to
-# the real bridge names once they're finalized on turkey/homelab.
 proxmox_mgmt_bridge: ""
-proxmox_app_bridge: ""
 
-# Also not yet finalized -- the app VLAN's real default gateway (there's
-# no equivalent placeholder needed for the management VLAN: that one's
-# gateway is management_gateway, already set per-host in host_vars for
-# roles/management_network's split routing).
-proxmox_app_gateway: ""
-
-# CIDR prefix lengths for net0 (app VLAN) and net1 (management VLAN).
-# Fallbacks only -- the real values live in inventory/<env>/group_vars/
-# vm.yml (shared with proxmox-tofu's vm-hostvars.py), overridable per
-# host in host_vars.
-app_network_prefix: 24
-management_network_prefix: 24
-
-proxmox_vm_nameservers: []
-
-# OUI-style prefix (first 3 octets) stamped onto every new VM's
-# management NIC (net1) MAC address at clone time -- see legacy_create_vm.yml's
-# management_mac. Must be in the locally-administered range (2nd hex
-# digit of the first octet one of 2/6/A/E) so it can never collide with
-# a real vendor OUI; "02:00:00" is the obvious/simplest such prefix.
-#
-# Left blank by default: net1 then keeps Proxmox's own randomly
-# generated MAC, and legacy_create_vm.yml skips pinning the MAC and skips the
-# rename-to-management_interface snippet below entirely -- the guest
-# keeps whatever name predictable-naming assigns it (e.g. Rocky's
-# ens19), same as today. Set to a real prefix (as a group_vars/vm.yml
-# value, not here) once you want new VMs' mgmt NIC actually renamed to
-# management_interface.
-management_mac_prefix: ""
-
-# Storage id the mgmt-NIC-rename cloud-init snippet is uploaded to (see
-# legacy_create_vm.yml) -- must be a directory-backed storage with the
-# "Snippets" content type enabled (Datacenter -> Storage -> <id> -> Edit
-# -> Content; a one-time manual change per node, not every storage type
-# supports arbitrary files -- e.g. LVM-thin/ZFS zvols can't). "local" is
-# the always-present per-node directory storage and the safest default;
-# override only if snippets need to live somewhere else in this cluster.
-proxmox_snippet_storage: local
-
-# cloud-init's initial user -- must be the operator's own personal
-# account, not the fleet-wide ansible_user (== "automation", see
-# group_vars/all/vars.yml): the automation account doesn't exist until
-# plays/system/onboarding.yml creates it
-# (roles/common/tasks/provision_automation_user.yml), so onboarding
-# itself has to reach the host as the operator first, same as
-# ./onboard --ask-become-pass does today. Left unset on purpose, like
-# proxmox_mgmt_bridge/proxmox_app_bridge above -- set the real value in
-# group_vars/proxmox/main.yml (same account as that group's
-# ansible_user, in practice).
-proxmox_vm_ciuser: ""
-
-# Matches the private key onboard already uses
-# (-e ansible_ssh_private_key_file=~/.ssh/id_ed25519).
-proxmox_vm_ssh_public_key: "{{ lookup('file', '~/.ssh/id_ed25519.pub') }}"
-
-# roles/hypervisor/tasks/snippet_permissions.yml -- who the proxmox-tofu
-# OpenTofu module (a separate repo, not this one) SSHes into
-# turkey/homelab as when it uploads the mgmt-NIC-rename snippet --
-# proxmox-tofu/scripts/proxmox-nodes.py reads this same account off
-# [proxmox:vars]' ansible_user in inventory, so providers.tf's
-# ssh.username never hardcodes it either. Deliberately *not* the
-# fleet-wide ansible_user (== "automation", group_vars/all/vars.yml) --
-# Tofu's SSH file transfer has no become/sudo equivalent, unlike
-# legacy_create_vm.yml's own snippet-upload task, so whoever it connects
-# as needs direct write access to proxmox_snippet_dir; passwordless
-# sudo (which "automation" already has) doesn't help it the way it
-# helps Ansible. Left unset on purpose, like proxmox_vm_ciuser above --
-# set the real value in group_vars/proxmox/main.yml.
 proxmox_snippet_write_user: ""
-
-# Directory-owning group this task grants proxmox_snippet_write_user
-# membership in, then group-owns proxmox_snippet_dir with (setgid, so
-# files written after this task runs keep inheriting it). "pve" or
-# "www-data" would already exist and might seem like a shortcut, but
-# both carry broader Proxmox-internal meaning on this system than "can
-# write cloud-init snippets" -- a dedicated group keeps the grant
-# legible and easy to revoke on its own.
 proxmox_snippet_group: pvesnippets
-
-# Same path legacy_create_vm.yml's own "Render and upload the mgmt-NIC-rename
-# cloud-init snippet" task writes to.
 proxmox_snippet_dir: /var/lib/vz/snippets
 
-# roles/hypervisor/tasks/snapshot.yml -- prunes older ansible-taken
-# snapshots once there are more than this many, so plays/system/update.yml's
-# automatic pre-update snapshot doesn't grow storage usage unbounded.
-# 0 would keep every snapshot forever.
 proxmox_snapshot_retention: 5
+proxmox_snapshot_name: "ansible-{{ ansible_facts['date_time'].iso8601_basic_short }}"
 
-# Distinct per run so retention counts actual snapshots taken, not
-# overwrites of the same name. Override with -e for a one-off snapshot
-# with a more meaningful name (see plays/vm/snapshot_vm.yml).
-proxmox_snapshot_name: "ansible-{{ ansible_date_time.iso8601_basic_short }}"
-
-# roles/hypervisor/tasks/ksm.yml -- ksmtuned starts merging pages once
-# free host memory drops below this percentage. Proxmox's stock 20 only
-# kicks in once a node is already short on RAM; at 50 merging runs as
-# soon as the node is half full, which on these two nodes is basically
-# always. KSM costs a little ksmd CPU in exchange.
 proxmox_ksm_thres_coef: 50
 
-# Fraction of proxmox_vm.memory a VM's balloon may be squeezed down to
-# when the host runs short (Proxmox's "Minimum memory"), unless
-# proxmox_vm.memory_min sets an explicit MiB value. Ballooning only
-# kicks in when the host is above ~80% RAM, so idle VMs give memory back
-# to busy ones instead of the node swapping. Set memory_min equal to
-# memory for anything with a fixed in-guest heap (JVM/OpenSearch) that
-# would rather OOM-kill than shrink.
-proxmox_vm_balloon_ratio: 0.5
-
-# roles/hypervisor/tasks/reboot.yml -- seconds to wait for the guest's
-# clean shutdown+start, and again for SSH to come back afterwards.
 proxmox_reboot_timeout: 300

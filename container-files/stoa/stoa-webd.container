@@ -1,0 +1,24 @@
+[Unit]
+Description=Stoa webd (Svelte web UI + auth/session BFF in front of agentd)
+After=network-online.target stoa-authd.service stoa-agentd.service
+Wants=network-online.target
+Requires=stoa-authd.service stoa-agentd.service
+
+[Container]
+Image=stoa-webd.build
+Network=stoa-external.network
+NetworkAlias=webd
+Environment=WEBD_AUTHD_URL=http://authd:8888
+Environment=WEBD_AGENTD_URL=http://agentd:7777
+Environment=WEBD_APIKEYD_URL=http://apikeyd:8889
+Environment=WEBD_S3_ENDPOINT=http://garage:3900
+Environment=WEBD_S3_REGION=garage
+# WEBD_EXTERNAL_URL, WEBD_S3_BUCKET, WEBD_S3_ACCESS_KEY_ID,
+# WEBD_S3_SECRET_ACCESS_KEY, ATTACHMENT_SECRET come from .env.
+EnvironmentFile=/srv/containers/container-files/stoa/.env
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

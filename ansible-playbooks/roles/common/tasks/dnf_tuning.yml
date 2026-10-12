@@ -1,9 +1,4 @@
 ---
-# Same settings build_template.yml bakes into new templates
-# (proxmox_template_dnf_conf_lines), enforced here for hosts cloned
-# before that existed and anything not built from those templates.
-# max_parallel_downloads defaults to 3, which is most of why a large
-# upgrade is slow.
 - name: Raise dnf's parallel download limit
   ansible.builtin.lineinfile:
     path: /etc/dnf/dnf.conf
@@ -11,5 +6,3 @@
     line: max_parallel_downloads=10
     insertafter: '^\[main\]'
   when: ansible_facts['pkg_mgr'] in ['dnf', 'dnf5']
-  tags:
-    - packages

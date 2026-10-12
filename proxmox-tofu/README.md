@@ -3,10 +3,8 @@
 OpenTofu replacement for `ansible-playbooks`' VM *lifecycle* steps —
 cloning a VM from a golden template, sizing it, wiring up its two NICs
 and cloud-init, and powering it on. This is the supported default for
-both `testzone` and `dangerzone` now; the original Ansible-native path
-(`plays/legacy_create_vm.yml` / `plays/legacy_delete_vm.yml`, i.e.
-`roles/hypervisor/tasks/legacy_create_vm.yml` / `legacy_delete_vm.yml`)
-still exists only as a fallback — see "Once this was trusted" below.
+both `testzone` and `dangerzone`; the original Ansible-native path has
+been removed.
 
 **Out of scope, deliberately, for now:**
 - Building the golden templates themselves
@@ -143,11 +141,15 @@ no separate Tofu-side list to keep in sync:
    line (`management_ip`/`app_ip`/`proxmox_vmid`) plus its
    `host_vars/<name>.yml`'s `proxmox_vm` block (node/template/cores/
    memory) -- same as any other host.
+   For USB passthrough, list Proxmox resource mapping names (Datacenter →
+   Resource Mappings → USB, created by hand on the node) in
+   `proxmox_vm.usb_mappings`, e.g. `[meshcore]`. Mappings rather than raw
+   vendor:product IDs, because a raw host device needs `root@pam` itself
+   and the API token can't use one.
 2. `scripts/tofu-with-vault-secrets.sh <env> apply`.
 3. Everything from here on is unchanged: bring up the management VLAN,
    then `./onboard` — see `docs/Typical_Procedure.md`'s "Creating a new
-   VM". Tofu doesn't touch inventory, same as `legacy_create_vm.yml`
-   never did.
+   VM". Tofu doesn't touch inventory.
 
 ## Destroying a VM
 
@@ -157,27 +159,8 @@ scripts/tofu-with-vault-secrets.sh <env> destroy \
 ```
 
 Then remove its `hosts.ini` line / `host_vars/` file in
-`ansible-playbooks`, same as `legacy_delete_vm.yml`'s existing "remember
-to also remove the host's inventory entries" note.
+`ansible-playbooks`.
 
 **No `confirm_delete`-style safety check exists here yet** — `-target`
 plus reading the plan output carefully is the only guard right now. Don't
 run a bare `destroy` (no `-target`) against a shared environment's state.
-
-## Status: legacy path demoted, not deleted
-
-Both testzone and dangerzone are fully Tofu-managed now (`dangerzone`'s 6
-real hosts were imported and proven out via a full destroy/recreate/
-reprovision cycle). `ansible-playbooks`' original Ansible-native path is
-renamed rather than removed — `plays/legacy_create_vm.yml` /
-`plays/legacy_delete_vm.yml` and `roles/hypervisor/tasks/legacy_create_vm.yml`
-/ `legacy_delete_vm.yml` — kept as a fallback (e.g. a Proxmox node not yet
-wired into `proxmox-tofu`, or Tofu/its provider being unavailable), but
-no longer the documented default; everything else in that role
-(`build_templates.yml`, `repo_hygiene.yml`, `snapshot.yml`, `snippet_permissions.yml`)
-is unaffected either way. Don't run both tools against the same VM's
-lifecycle in parallel: whichever one didn't do the most recent
-clone/config change has a stale view of that VM's state.
-
-One gap the legacy path still covers that Tofu's own `destroy` doesn't:
-an explicit `confirm_delete` safety check (see "Destroying a VM" above).

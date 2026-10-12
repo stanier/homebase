@@ -1,0 +1,33 @@
+[Unit]
+Description=Alertmanager
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=docker.io/prom/alertmanager:v0.34.1
+Network=alerting.network
+NetworkAlias=alertmanager
+# The default --web.external-url is http://<hostname>:9093, which ends up
+# in every notification's silence link. Pinning the hostname makes that
+# a known value the receiver's external-url-mapping can rewrite to the
+# Caddy vhost (host_vars/metrics1.yml).
+HostName=alertmanager
+# Published on all interfaces: vmalert and vmagent (Network=host, same
+# machine) reach it on loopback, container-sandbox's Caddy over app_ip
+# (host_vars' firewall_rules open 9093 to it alone).
+PublishPort=9093:9093
+Volume=/srv/containers/container-files/alerting/data/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro,z
+# Silences and the notification log live here.
+Volume=alerting_alertmanager_data:/alertmanager
+Exec=--config.file=/etc/alertmanager/alertmanager.yml --storage.path=/alertmanager
+HealthCmd=wget -q --spider http://127.0.0.1:9093/-/healthy
+HealthInterval=30s
+HealthTimeout=5s
+HealthStartPeriod=15s
+HealthRetries=3
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

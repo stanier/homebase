@@ -1,0 +1,39 @@
+[Unit]
+Description=MeshCore traffic web UI
+After=network-online.target mosquitto.service
+Wants=network-online.target mosquitto.service
+
+[Container]
+Image=meshcore-webui.build
+Network=meshcore.network
+# oauth2-proxy.container's upstream. No PublishPort: the UI has no login
+# of its own, so the only way in is through oauth2-proxy's Keycloak
+# login on this network.
+NetworkAlias=meshcore-webui
+Environment=MQTT_HOST=mosquitto
+Environment=MQTT_USERNAME=webui
+Environment=WEBUI_DB=/data/meshcore-webui.db
+# FreeIPA's fleet-admins (the freeipa_admin_users, see
+# plays/apps/freeipa_ssh_access.yml) may change channels, name, region,
+# position and TX power; everyone else who can log in only watches. The
+# group arrives in oauth2-proxy's X-Forwarded-Groups, from the groups
+# mapper on Keycloak's meshcore-webui client (plays/apps/keycloak.yml).
+# oauth2-proxy strips any X-Forwarded-Groups a browser sends, and this
+# container publishes no port, so only oauth2-proxy can set it.
+Environment=WEBUI_EDITOR_GROUP=fleet-admins
+# MQTT_PASSWORD, from host_vars/meshcore1.yml's containerapps_secret_files.
+# Its own file rather than meshcore/.env, which holds the gateway's
+# password under the same name.
+EnvironmentFile=/srv/containers/container-files/meshcore/data/webui.env
+# Recent traffic history (SQLite). Losing it only loses scrollback.
+Volume=meshcore_webui:/data
+HealthCmd=python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4)"
+HealthInterval=30s
+HealthStartPeriod=10s
+HealthRetries=3
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

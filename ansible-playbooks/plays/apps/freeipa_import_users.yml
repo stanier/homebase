@@ -1,44 +1,13 @@
-# Imports a portable user export (freeipa_export_users.yml's output)
-# into this environment's FreeIPA. Idempotent and safe to re-run --
-# community.general.ipa_user/ipa_group are both create-or-modify
-# modules, so importing the same file twice just confirms nothing
-# changed the second time, same as any other Ansible task.
-#
-# No Kerberos key/password crosses environments (see
-# freeipa_export_users.yml's own comment for why one can't) -- every
-# imported account is created with freeipa_import_password as a
-# one-time password. IPA already forces a password reset at next login
-# whenever an admin sets a user's password this way (same behaviour a
-# freshly `ipa user-add`'d account gets), so there's no
-# krbpasswordexpiration override needed here, unlike
-# roles/freeipa/tasks/main.yml's own bind-account task which
-# deliberately avoids that reset for its non-interactive service
-# accounts. update_password: on_create means re-running this play
-# against accounts that already exist here never resets their real,
-# already-changed password back to the imported one-time value.
-#
-# Group memberships come along for the ride (memberof_group in the
-# export), added with append: true so this only ever adds imported
-# users to groups -- it never removes an existing member who wasn't
-# part of the export. Groups referenced in the export that don't yet
-# exist here are created bare (name only) by ipa_group; ipausers is
-# skipped since IPA already puts every user in it automatically.
-# Anything beyond plain group membership (HBAC/sudo rules, roles) is
-# out of scope for now -- add it here if a future export needs it.
-#
-# Run against a specific environment's freeipa host:
+# Imports a freeipa_export_users.yml file into this environment's
+# FreeIPA. Safe to re-run. Every new account gets freeipa_import_password
+# as a one-time password (IPA forces a change at first login);
+# update_password: on_create leaves existing accounts' passwords alone.
+# Group memberships are only ever added (missing groups are created
+# bare; ipausers is skipped). HBAC/sudo rules aren't carried over.
 #
 #   ansible-playbook --ask-vault-pass -i inventory/<env> \
 #     plays/apps/freeipa_import_users.yml \
-#     -e freeipa_import_file=/path/to/users.json \
-#     -e freeipa_import_password='...'
-#
-# Validate against testzone before dangerzone, same as any other
-# change here -- there's no meaningful --check mode for this play (the
-# ipa_user/ipa_group modules do support check_mode, but the read of
-# freeipa_import_file and the group-membership bookkeeping happen via
-# set_fact regardless, so --check only skips the actual IPA writes, not
-# a full dry run of what they'd be).
+#     -e freeipa_import_file=/path/to/users.json -e freeipa_import_password='...'
 - name: Import a portable FreeIPA user export
   hosts: freeipa
   become: false

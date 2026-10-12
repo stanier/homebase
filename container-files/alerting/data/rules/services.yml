@@ -1,0 +1,26 @@
+# Service reachability, from blackbox-exporter's probes (the blackbox-*
+# jobs in vmagent-config.yaml). `instance` is the vhost or service name,
+# not a host.
+groups:
+  - name: services
+    rules:
+      - alert: ProbeFailed
+        expr: probe_success == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }} is failing its {{ $labels.job }} probe"
+          description: "blackbox-exporter can't reach {{ $labels.target }}."
+
+      # The fleet's certs come from Caddy's own ACME server, which issues
+      # 12-hour certs that Caddy renews with roughly 4 hours left. Under
+      # 2 hours means renewal is failing, well before anything expires.
+      - alert: CertRenewalStalled
+        expr: probe_ssl_earliest_cert_expiry{job="blackbox-http"} - time() < 2 * 3600
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }}'s certificate hasn't been renewed"
+          description: "The cert served at {{ $labels.target }} expires in {{ $value | humanizeDuration }}."

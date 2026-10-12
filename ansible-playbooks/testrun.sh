@@ -11,9 +11,8 @@ if [[ "${1:-}" == "--clean" ]]; then
     TOFU_CLEAN=true
 fi
 
-# containerapps_local_src/containerapps_source come from inventory's
-# hosts.ini [all:vars] -- not hardcoded here, since that path is
-# specific to wherever this operator's container-files checkout lives.
+# --clean destroys and recreates the listed VMs first. Extra arguments
+# are passed to ansible-playbook (e.g. --tags podman).
 ansible-playbook --ask-vault-pass -i "$ANSIBLE_INVENTORY" -l "$ANSIBLE_HOSTS" \
     -e tofu_clean="$TOFU_CLEAN" \
     plays/testrun.yml "$@"

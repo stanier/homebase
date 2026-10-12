@@ -1,0 +1,18 @@
+[Unit]
+Description=Stoa authd DB migrations (one-shot, runs before stoa-authd)
+After=network-online.target stoa-postgres-authd.service
+Wants=network-online.target
+Requires=stoa-postgres-authd.service
+
+[Container]
+Image=stoa-auth-admin.build
+Network=stoa-db-authd.network
+EnvironmentFile=/srv/containers/container-files/stoa/.env
+Exec=authd migrate up
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=default.target

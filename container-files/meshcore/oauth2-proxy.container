@@ -1,0 +1,45 @@
+[Unit]
+Description=Keycloak login in front of the MeshCore web UI
+After=network-online.target meshcore-webui.service
+Wants=network-online.target meshcore-webui.service
+
+[Container]
+Image=quay.io/oauth2-proxy/oauth2-proxy:v7.15.5
+Network=meshcore.network
+# container-sandbox's Caddy proxies mesh.<base_domain> here;
+# host_vars/meshcore1.yml's firewall_rules opens 4180 to it alone.
+PublishPort=4180:4180
+Environment=OAUTH2_PROXY_HTTP_ADDRESS=0.0.0.0:4180
+Environment=OAUTH2_PROXY_UPSTREAMS=http://meshcore-webui:8080/
+Environment=OAUTH2_PROXY_PROVIDER=keycloak-oidc
+Environment=OAUTH2_PROXY_CLIENT_ID=meshcore-webui
+Environment=OAUTH2_PROXY_CODE_CHALLENGE_METHOD=S256
+# Any Keycloak (i.e. FreeIPA) user may watch, as with Synapse's SSO.
+# Identify users by username: FreeIPA accounts needn't have an email.
+# The upstream gets X-Forwarded-Preferred-Username and X-Forwarded-Groups
+# (pass_user_headers is on by default; the groups come from the ID
+# token's "groups" claim). The web UI lets meshcore-webui.container's
+# WEBUI_EDITOR_GROUP change settings. Groups are read at login, so a
+# membership change takes effect at the next one (the session cookie
+# lasts oauth2-proxy's default week).
+Environment=OAUTH2_PROXY_EMAIL_DOMAINS=*
+Environment=OAUTH2_PROXY_OIDC_EMAIL_CLAIM=preferred_username
+Environment=OAUTH2_PROXY_SKIP_PROVIDER_BUTTON=true
+# Behind Caddy, which terminates TLS and sets X-Forwarded-*.
+Environment=OAUTH2_PROXY_REVERSE_PROXY=true
+Environment=OAUTH2_PROXY_COOKIE_SECURE=true
+Environment=OAUTH2_PROXY_COOKIE_NAME=_meshcore_webui
+# Keycloak's certificate is from the lab CA.
+Environment=OAUTH2_PROXY_PROVIDER_CA_FILES=/etc/oauth2-proxy/root-ca.crt
+Volume=/srv/containers/container-files/meshcore/root-ca.crt:/etc/oauth2-proxy/root-ca.crt:ro,z
+# OIDC_ISSUER_URL and REDIRECT_URL (they need base_domain), CLIENT_SECRET
+# and COOKIE_SECRET, from host_vars/meshcore1.yml's
+# containerapps_secret_files.
+EnvironmentFile=/srv/containers/container-files/meshcore/data/oauth2-proxy.env
+# No HealthCmd: the image is distroless, with nothing to run a probe.
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

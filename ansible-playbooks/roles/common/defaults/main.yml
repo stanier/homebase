@@ -1,0 +1,15 @@
+---
+# Pull-through package cache (container-files/pkgmirror), e.g.
+# "http://<its app_ip>:8080". Empty leaves every host on its distro's
+# own mirrors; see tasks/package_mirror.yml for what setting it changes.
+package_mirror_url: ""
+# Off for the mirror host itself and anything that can't reach it.
+package_mirror_enabled: "{{ package_mirror_url | length > 0 }}"
+
+# Upstreams apt is sent through the mirror for -- only http:// sources
+# on these hosts; anything else stays DIRECT. Must be a subset of what
+# container-files/pkgmirror's nginx map allows.
+package_mirror_apt_hosts:
+  - deb.debian.org
+  - security.debian.org
+  - download.proxmox.com

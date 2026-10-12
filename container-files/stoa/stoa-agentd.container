@@ -1,0 +1,65 @@
+[Unit]
+Description=Stoa agentd (LLM/MCP/session daemon)
+After=network-online.target stoa-postgres-agentd.service stoa-migrate-agentd.service stoa-authd.service stoa-squid.service
+Wants=network-online.target
+Requires=stoa-postgres-agentd.service stoa-migrate-agentd.service stoa-authd.service
+
+[Container]
+Image=stoa-agentd.build
+Network=stoa-db-agentd.network
+Network=stoa-external.network
+NetworkAlias=agentd
+
+# Auth -- delegate token validation to authd.
+Environment=AGENTD_AUTHD_URL=http://authd:8888
+Environment=AGENTD_SESSION_DIR=/app/sessions
+Environment=DOCKER_HOST=unix:///run/podman/podman.sock
+
+# S3 (Garage) for attachments -- passed through to mcp-attachments.
+Environment=GARAGE_S3_ENDPOINT=http://garage:3900
+Environment=GARAGE_S3_REGION=garage
+
+# Squid egress proxy for MCP tool containers. NetworkAlias below must match
+# what stoa-squid.container publishes on stoa-external.network.
+Environment=AGENTD_SQUID_CONF_PATH=/app/squid/squid.conf
+Environment=MCP_PROXY_ADDRESS=http://stoa-squid:3128
+
+# agentd's own stoa-infgw_* key for inference-gateway (GATEWAY_API_URL),
+# issued by apikeyd, not an upstream provider key. It's used for model
+# discovery and sessions without a user; web sessions send the per-user
+# key authd provisions at login instead. See README "LLM keys".
+Secret=gateway_api_key,type=mount,target=/run/secrets/gateway_api_key
+Environment=GATEWAY_API_KEY_FILE=/run/secrets/gateway_api_key
+
+# LLM_PROVIDER, GATEWAY_API_URL, TITLING_*, AGENTD_DATABASE_URL,
+# ATTACHMENT_SECRET, GARAGE_S3_BUCKET, GARAGE_S3_ACCESS_KEY_ID,
+# GARAGE_S3_SECRET_ACCESS_KEY, and any MCP server credentials (NETBOX_*,
+# TRELLO_*, PROMETHEUS_BASE_URL, GRAPHQL_ENDPOINT) come from .env -- see
+# .env.example. LLM_PROVIDER/GATEWAY_API_URL are intentionally left unset
+# there until a provider is chosen.
+EnvironmentFile=/srv/containers/container-files/stoa/.env
+
+Volume=/srv/containers/container-files/stoa/data/config:/etc/stoa:ro,z
+Volume=/srv/containers/container-files/stoa/data/skills:/app/skills:ro,z
+Volume=/srv/stoa/traces:/app/traces:z
+Volume=/srv/stoa/logs:/app/logs:z
+Volume=/srv/stoa/sessions:/app/sessions:z
+Volume=/srv/stoa/squid:/app/squid:z
+Volume=stoa_mcp_workspace:/tmp/mcp-workspace
+# Grants agentd control of the host's rootless Podman socket so it can spin
+# up sandboxed MCP tool containers on demand -- a deliberate, significant
+# privilege. See container-files/stoa's README before enabling this on a
+# host that runs anything sensitive.
+Volume=%t/podman/podman.sock:/run/podman/podman.sock:ro
+
+HealthCmd=wget -qO- http://localhost:7777/acp/ping || exit 1
+HealthInterval=10s
+HealthTimeout=5s
+HealthRetries=6
+HealthStartPeriod=15s
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

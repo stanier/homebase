@@ -1,6 +1,0 @@
----
-# stub: Alpine Linux hosts
-- name: Update apk packages
-  community.general.apk:
-    update_cache: true
-    upgrade: true

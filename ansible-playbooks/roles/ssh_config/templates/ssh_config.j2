@@ -1,13 +1,6 @@
-# Managed by ansible-playbooks (roles/ssh_config) -- do not edit by
-# hand, this file is overwritten on every run of
-# plays/system/ssh_config.yml. Source: inventory/{{ ssh_config_env }}.
-#
-# Deliberately layered least-specific-last: per-host blocks (HostName
-# only) first, then one block per group of hosts sharing the same
-# non-common settings, then a single *.{{ ssh_config_env }} block for
-# whatever every host agrees on. ssh_config takes the first value it
-# finds for each keyword, so a more specific block earlier always wins
-# over a shared default later -- see roles/ssh_config/tasks/main.yml.
+# Managed by ansible-playbooks (roles/ssh_config) from
+# inventory/{{ ssh_config_env }}; overwritten on every run. Ordered most
+# specific first, since ssh_config takes the first value it finds.
 {% for host in ssh_config_hosts | sort(attribute='host') %}
 
 Host {{ host.host }}.{{ ssh_config_env }}

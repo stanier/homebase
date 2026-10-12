@@ -8,9 +8,7 @@ OpenTofu replacement for
 [`ansible-playbooks`](https://docs.apps.testzone.internal/ansible-playbooks/)'
 VM *lifecycle* steps — cloning a VM from a golden template, sizing it,
 wiring up its two NICs and cloud-init, and powering it on. This is the
-supported default for both `testzone` and `dangerzone`; the original
-Ansible-native path (`plays/legacy_create_vm.yml` /
-`plays/legacy_delete_vm.yml`) still exists only as a fallback. See the
+supported default for both `testzone` and `dangerzone`. See the
 [homebase overview](https://docs.apps.testzone.internal/) for how this
 fits into the wider provision → onboard → deploy pipeline.
 

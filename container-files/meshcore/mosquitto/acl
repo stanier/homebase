@@ -1,0 +1,43 @@
+# Mosquitto ACL for meshcore-gateway (prefix "meshcore"). Kept in step
+# with the gateway repo's deploy/mosquitto/acl, which its tests run
+# against a real broker.
+#
+#   meshcore/rx/...           traffic heard on the mesh
+#   meshcore/tx/channel/<n>   send to one channel slot
+#   meshcore/cmd/read/...     queries
+#   meshcore/cmd/write/...    settings: channels, name, position, power
+#   meshcore/cmd/admin/...    radio parameters and reboot (also needs
+#                             GATEWAY_ENABLE_ADMIN=true on the gateway)
+#
+# Each user reads only the replies addressed to its own username.
+pattern read meshcore/reply/%u/#
+
+user meshcore-gateway
+topic readwrite meshcore/#
+
+# The planned Matrix bridge bot: all traffic, any channel, settings, no admin.
+user matrix-bot
+topic read meshcore/status
+topic read meshcore/device
+topic read meshcore/channels
+topic read meshcore/rx/#
+topic read meshcore/sent/#
+topic read meshcore/event/#
+topic write meshcore/tx/#
+topic write meshcore/cmd/read/#
+topic write meshcore/cmd/write/#
+topic write meshcore/cmd/admin/set_radio
+
+# The traffic web UI (meshcore-webui.container): sees everything the
+# gateway publishes, and changes settings (cmd/write/) for members of
+# its WEBUI_EDITOR_GROUP. It doesn't send messages and gets no admin.
+# Same stanza as the meshcore-webui repo's deploy/mosquitto/acl, which
+# its tests run.
+user webui
+topic read meshcore/status
+topic read meshcore/device
+topic read meshcore/channels
+topic read meshcore/rx/#
+topic read meshcore/sent/#
+topic read meshcore/event/#
+topic write meshcore/cmd/write/#

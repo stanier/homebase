@@ -1,16 +1,17 @@
 ---
 - name: Provision Proxmox VMs via OpenTofu
-  hosts: vm
+  hosts: all
   connection: local
   gather_facts: false
   vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
     # Derived from whichever inventory directory -i actually pointed at
     # (e.g. ".../inventory/dangerzone" -> "dangerzone"), not hardcoded --
     # this used to be a literal "testzone", which meant every task below
     # kept reading/writing testzone's own Tofu project and state
     # regardless of which environment this play was actually invoked
     # against. Every environment goes through Tofu now (dangerzone's
-    # existing VMs were imported into the dangerzone workspace's state
+    # existing VMs were imported into environments/dangerzone's state
     # via scripts/import.sh dangerzone), so there's no separate
     # per-environment opt-in flag here anymore -- this play just always
     # runs Tofu for whichever environment/hosts it's pointed at.
@@ -20,149 +21,82 @@
     tofu_clean: false
 
   tasks:
-    # ansible_python_interpreter scoped to this block, not the whole play
-    # -- these tasks all run with connection: local (the play default) and
-    # need the controller's own venv Python (proxmoxer etc. live there),
-    # not the guest's. It used to be a play-wide var, but task-level vars
-    # on "Wait for the new VM to answer SSH" below don't actually override
-    # a play-level var for this connection-plugin lookup (tested against
-    # ansible-core 2.21.4: the task kept getting the play's literal
-    # python3.13 path and running it verbatim against the guest, which
-    # only has python3.12 -- no auto-detection ever kicked in), so scoping
-    # it here instead is what actually keeps it off that task.
-    - name: Provision this host's VM via OpenTofu
-      vars:
-        ansible_python_interpreter: "{{ ansible_playbook_python }}"
-      block:
-        - name: Compute this host's Tofu module target address
-          ansible.builtin.set_fact:
-            tofu_target: module.vm["{{ inventory_hostname }}"]
+    - name: Compute this host's Tofu module target address
+      ansible.builtin.set_fact:
+        tofu_target: module.vm["{{ inventory_hostname }}"]
 
-        - name: Collect every selected host's Tofu target into one list
-          ansible.builtin.set_fact:
-            tofu_targets: "{{ ansible_play_hosts_all | map('extract', hostvars, 'tofu_target') | list }}"
-          run_once: true
+    - name: Collect every selected host's Tofu target into one list
+      ansible.builtin.set_fact:
+        tofu_targets: "{{ ansible_play_hosts_all | map('extract', hostvars, 'tofu_target') | list }}"
+      run_once: true
 
-        # Same two variables scripts/tofu-with-vault-secrets.sh exports:
-        # the [proxmox] node names (providers.tf's for_each keys) and a
-        # {node: token secret} map.
-        - name: Compute the Proxmox API token secrets Tofu's providers need
-          ansible.builtin.set_fact:
-            tofu_api_token_secrets: "{{ (tofu_api_token_secrets | default({})) | combine({item: lookup('vars', 'vault_' ~ item ~ '_proxmox_api_token_secret')}) }}"
-          loop: "{{ groups['proxmox'] }}"
-          run_once: true
-          no_log: true
+    # Same two variables scripts/tofu-with-vault-secrets.sh exports:
+    # environments/providers.tf for_each's one provider per [proxmox]
+    # node, keyed by the node's real name.
+    - name: Compute the Proxmox node list and API token secrets Tofu's providers need
+      ansible.builtin.set_fact:
+        tofu_secret_env:
+          TF_VAR_proxmox_nodes: "{{ groups['proxmox'] | to_json }}"
+          TF_VAR_proxmox_api_token_secrets: "{{ dict(groups['proxmox'] | zip(query('vars', *(groups['proxmox'] | map('regex_replace', '^(.*)$', 'vault_\\1_proxmox_api_token_secret') | list)))) | to_json }}"
+      run_once: true
+      no_log: true
 
-        - name: Build the Tofu environment from those secrets
-          ansible.builtin.set_fact:
-            tofu_secret_env:
-              TF_VAR_proxmox_nodes: "{{ groups['proxmox'] | to_json }}"
-              TF_VAR_proxmox_api_token_secrets: "{{ tofu_api_token_secrets | to_json }}"
-          run_once: true
-          no_log: true
+    - name: Destroy the selected hosts' VMs
+      community.general.terraform:
+        project_path: "{{ proxmox_tofu_dir }}/environments"
+        workspace: "{{ tofu_environment }}"
+        binary_path: "{{ tofu_binary }}"
+        state: absent
+        targets: "{{ tofu_targets }}"
+      # ANSIBLE_INVENTORY_ENV tells scripts/vm-hostvars.py and
+      # scripts/proxmox-nodes.py (Tofu's own `external` data sources)
+      # which inventory/<env> to read -- they used to hardcode
+      # "testzone" themselves, same issue as tofu_environment above.
+      environment: "{{ tofu_secret_env | combine({'ANSIBLE_INVENTORY_ENV': tofu_environment}) }}"
+      run_once: true
+      no_log: true
+      when: tofu_clean | bool
 
-        # Outside testzone, Tofu's destroy does a graceful ACPI shutdown
-        # first (environments/locals.tf's stop_on_destroy) and waits it
-        # out -- ~4.5 minutes of every testrun.sh --clean. That's the
-        # right default for an ad-hoc destroy, but --clean is throwing
-        # these disks away anyway, so there's nothing worth flushing:
-        # hard-stop them here (in parallel, one task per host) and the
-        # destroy below finds them already off. stop_on_destroy itself
-        # can't just be flipped for --clean runs -- the provider reads it
-        # from state at destroy time, not from config.
-        - name: Hard-stop this host's VM ahead of a --clean destroy
-          community.proxmox.proxmox_kvm:
-            api_host: "{{ hostvars[proxmox_vm.node].ansible_host }}"
-            api_user: "{{ hostvars[proxmox_vm.node].proxmox_api_user }}"
-            api_token_id: "{{ hostvars[proxmox_vm.node].proxmox_api_token_id }}"
-            api_token_secret: "{{ hostvars[proxmox_vm.node].proxmox_api_token_secret }}"
-            validate_certs: "{{ proxmox_api_validate_certs | default(false) }}"
-            node: "{{ proxmox_vm.node }}"
-            vmid: "{{ proxmox_vmid }}"
-            state: stopped
-            force: true
-          register: tofu_clean_stop
-          # A host whose VM doesn't exist yet has nothing to stop.
-          failed_when:
-            - tofu_clean_stop is failed
-            - "'does not exist' not in (tofu_clean_stop.msg | default(''))"
-          when: tofu_clean | bool
+    - name: Apply the selected hosts' VMs
+      community.general.terraform:
+        project_path: "{{ proxmox_tofu_dir }}/environments"
+        workspace: "{{ tofu_environment }}"
+        binary_path: "{{ tofu_binary }}"
+        state: present
+        targets: "{{ tofu_targets }}"
+        parallelism: 1
+      environment: "{{ tofu_secret_env | combine({'ANSIBLE_INVENTORY_ENV': tofu_environment}) }}"
+      run_once: true
+      no_log: false
 
-        - name: Destroy the selected hosts' VMs
-          community.general.terraform:
-            project_path: "{{ proxmox_tofu_dir }}/environments"
-            binary_path: "{{ tofu_binary }}"
-            workspace: "{{ tofu_environment }}"
-            state: absent
-            targets: "{{ tofu_targets }}"
-          # ANSIBLE_INVENTORY_ENV tells scripts/vm-hostvars.py and
-          # scripts/proxmox-nodes.py (Tofu's own `external` data sources)
-          # which inventory/<env> to read -- they used to hardcode
-          # "testzone" themselves, same issue as tofu_environment above.
-          environment: "{{ tofu_secret_env | combine({'ANSIBLE_INVENTORY_ENV': tofu_environment}) }}"
-          run_once: true
-          no_log: true
-          when: tofu_clean | bool
+    - name: Forget this host's previously known SSH host keys
+      ansible.builtin.known_hosts:
+        name: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ app_ip }}"
+        - "{{ management_ip }}"
 
-        - name: Apply the selected hosts' VMs
-          community.general.terraform:
-            project_path: "{{ proxmox_tofu_dir }}/environments"
-            binary_path: "{{ tofu_binary }}"
-            workspace: "{{ tofu_environment }}"
-            state: present
-            targets: "{{ tofu_targets }}"
-            parallelism: 1
-          environment: "{{ tofu_secret_env | combine({'ANSIBLE_INVENTORY_ENV': tofu_environment}) }}"
-          run_once: true
-          no_log: false
-
-        - name: Forget this host's previously known SSH host keys
-          ansible.builtin.known_hosts:
-            name: "{{ item }}"
-            state: absent
-          loop:
-            - "{{ app_ip }}"
-            - "{{ management_ip }}"
-
-    # The block above runs every task via connection: local with
-    # ansible_python_interpreter pinned to the controller's own venv
-    # Python (python3.13) -- but Ansible records that as this
-    # inventory_hostname's "discovered_interpreter_python" fact
-    # regardless of connection type, and with fact_caching=jsonfile
-    # (ansible.cfg, 24h timeout) that gets persisted to disk and outlives
-    # this play. Any later SSH-based task against the same
-    # inventory_hostname -- the "Wait for the new VM to answer SSH" task
-    # right below, and testrun.yml's very next play (onboarding.yml),
-    # which shares this same run's fact cache -- would find that cached
-    # python3.13 and use it verbatim instead of auto-detecting the
-    # guest's real interpreter, failing with "module interpreter ...
-    # was not found" since the guest doesn't have python3.13. Clearing
-    # facts here forces fresh auto-detection for everything after.
-    - name: Clear this host's cached facts before connecting over SSH
-      ansible.builtin.meta: clear_facts
-
-    # management_ip, not app_ip -- onboarding.yml and every later play
-    # connect via management_ip (hosts.ini's ansible_host default) over
-    # the management-network bastion (group_vars/vm.yml's
-    # ansible_ssh_common_args ProxyCommand through the bastion -- see
-    # onboarding.yml's own comment calling management_ip "the
-    # non-routed management network"), so that's the path that actually
-    # needs to be up before onboarding.yml's very next task runs.
+    # app_ip, not management_ip -- same reasoning as
+    # roles/hypervisor/tasks/legacy_create_vm.yml's identical wait (the
+    # Ansible-native path this play replaced): management_ip depends on
+    # roles/management_network having already run (split routing, sshd
+    # ListenAddress), which happens later in plays/testrun.yml, not here.
+    # app_ip is the one address guaranteed live off this VM's only
+    # default route at boot. Without this, onboarding.yml's very next
+    # task races the guest's own boot/cloud-init and fails with a plain
+    # connection timeout instead of ever getting a chance to succeed.
     #
-    # ansible.builtin.wait_for can't be used for this: it opens a raw
-    # socket from the controller and has no notion of
-    # ansible_ssh_common_args/ProxyCommand, so it can never succeed
-    # against a bastion-only address regardless of how long it waits.
-    # wait_for_connection instead drives a real connection attempt
-    # through the configured connection plugin -- forced to `ssh` here
-    # (the play default is `connection: local`, needed for the Tofu block
-    # above) so it actually goes through the same bastion tunnel
-    # onboarding.yml will use. No ansible_python_interpreter override
-    # needed here -- that's scoped to the Tofu block above now, so this
-    # task is free to auto-detect the guest's own Python normally.
+    # Assumes this play is targeting genuinely fresh VMs (testzone's
+    # normal repeatable destroy+recreate cycle, see group_vars/vm.yml) --
+    # re-targeting an already-provisioned host here (sshd already bound
+    # to management_ip only, app_ip no longer answering at all) will
+    # just eat the full 300s and fail for that host. Scope -l to hosts
+    # that actually need (re)provisioning, or use --clean, rather than
+    # mixing fresh and already-onboarded hosts in the same run.
     - name: Wait for the new VM to answer SSH
-      ansible.builtin.wait_for_connection:
+      ansible.builtin.wait_for:
+        host: "{{ app_ip }}"
+        port: 22
         delay: 5
         timeout: 300
-      vars:
-        ansible_connection: ssh

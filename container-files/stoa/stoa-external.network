@@ -1,0 +1,5 @@
+[Unit]
+Description=Stoa external-facing network (agentd, authd, apikeyd, inference-gateway, webd, nginx, garage, squid)
+
+[Network]
+NetworkName=agent-external

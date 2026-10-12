@@ -1,0 +1,4 @@
+[Unit]
+Description=Alerting network (Alertmanager + Matrix receiver)
+
+[Network]

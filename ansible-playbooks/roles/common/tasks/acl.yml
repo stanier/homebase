@@ -1,7 +1,0 @@
----
-- name: Install acl package for POSIX ACL support
-  ansible.builtin.package:
-    name: acl
-    state: present
-  tags:
-    - packages

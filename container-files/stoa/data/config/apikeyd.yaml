@@ -1,0 +1,21 @@
+# apikeyd configuration — copy to apikeyd.yaml and adjust for your environment.
+#
+# Runtime secrets (database password, etc.) are read from environment variables
+# specified via *_env fields — never stored in this file.
+#
+# All other values that vary between environments (URLs, ports) should be set
+# in your .env file and referenced here, or overridden via APIKEYD_* env vars.
+
+# Listen port — overridden by APIKEYD_PORT env var if set.
+port: 8889
+
+# Public base URL — used to build the OAuth callback redirect URI.
+# Must be reachable by browsers. Overridden by APIKEYD_EXTERNAL_URL.
+external_url: "http://localhost:8889"
+
+# authd base URL — internal service-to-service address.
+# Overridden by APIKEYD_AUTHD_URL.
+authd_url: "http://authd:8888"
+
+# Postgres DSN — read from the environment variable named here.
+database_url_env: APIKEYD_DATABASE_URL

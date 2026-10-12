@@ -1,14 +1,4 @@
 ---
-# Snapshots inventory_hostname via the Proxmox API, given proxmox_node/
-# proxmox_vmid in this host's own host_vars. Included two ways:
-#   - automatically, as a pre_task in plays/system/update.yml, for any host
-#     that has proxmox_node/proxmox_vmid set
-#   - on demand via plays/vm/snapshot_vm.yml --tags snapshot -l <host>
-#
-# Both run this against the host's own SSH connection (not
-# connection: local, unlike legacy_create_vm.yml) since the host already
-# exists and is reachable -- only the actual proxmox_snap call is
-# delegated to localhost, an API call.
 - name: Assert this host's Proxmox node/vmid are known
   ansible.builtin.assert:
     that:
@@ -44,14 +34,4 @@
   delegate_to: localhost
   become: false
   vars:
-    # ansible_playbook_python is the interpreter actually running
-    # ansible-playbook itself, which isn't necessarily the one with
-    # proxmoxer installed -- e.g. a system-wide ansible-core install
-    # alongside a per-operator venv used only for extra libraries.
-    # $VIRTUAL_ENV (set by the shell on `source venv/bin/activate`) is
-    # inherited by the ansible-playbook process regardless of which
-    # Python actually runs it, so prefer that when present.
-    ansible_python_interpreter: >-
-      {{ (lookup('env', 'VIRTUAL_ENV') ~ '/bin/python3')
-         if lookup('env', 'VIRTUAL_ENV')
-         else ansible_playbook_python }}
+    ansible_python_interpreter: "{{ proxmox_controller_python }}"
