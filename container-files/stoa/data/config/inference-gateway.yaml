@@ -66,5 +66,17 @@ routes:
   #     upstream: openai
   #   - model: "gemini-2.0-flash"
   #     upstream: gemini
+  #
+  # openrouter is static_models_only, so it exposes only the models named
+  # here. Globs are expanded against OpenRouter's model list ("*" doesn't
+  # cross "/", so "openai/*" matches openai/gpt-4o); exact IDs work too.
+  - model: "openai/*"
+    upstream: openrouter
+  - model: "google/*"
+    upstream: openrouter
+  - model: "deepseek/*"
+    upstream: openrouter
+  - model: "x-ai/*"
+    upstream: openrouter
   - model: "*"
     upstream: anthropic
