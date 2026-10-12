@@ -61,8 +61,8 @@ keyed to the `postgres-<svc>.env` filenames each `stoa-postgres-*.container`
 expects), seeds `/srv/stoa/squid/squid.conf`'s deny-all default, and adds
 Caddy routes on `container-sandbox` for `stoa`/`stoa-authd`/`stoa-apikeyd`/
 `stoa-idp`/`stoa-infgw.{{ base_domain }}`. `roles/containerapps` also
-grew a `stoa`-specific task to create `/srv/stoa/{traces,logs,sessions,garage}`
-before first start (see that role's `main.yml`).
+creates `/srv/stoa/{traces,logs,sessions,garage}` before first start (its
+`containerapps_service_dirs` default).
 
 If you're pointing this at a different host or environment, replicate
 that host_vars file and Caddyfile block -- `container-files/AGENTS.md`'s
@@ -77,15 +77,14 @@ What that wiring does **not** cover -- do these by hand:
    `group_vars/all/vault.yml` via `ansible-vault edit` -- see
    `../ansible-playbooks/docs/VAULT.md`. `group_vars/all/vars.yml` already
    references all of them under their plain `stoa_*` names.
-2. `podman secret create gateway_api_key -` (and `venice_api_key`,
-   `arcee_api_key`, `openrouter_api_key` if those upstreams are enabled in
-   `data/config/inference-gateway.yaml`) directly on the `stoa` host --
-   Podman secrets aren't part of the synced tree or `containerapps_env`.
-3. Pick an LLM provider: `LLM_PROVIDER`/`GATEWAY_API_URL` are deliberately
-   left out of `host_vars/stoa.yml`'s `containerapps_env.stoa`, and
-   `data/config/config.yaml`'s `llm.providers` is still at its upstream
-   Anthropic-shaped stub -- fill in both for real before starting
-   `stoa-agentd`.
+2. Add `vault_stoa_gateway_api_key` (an Anthropic API key: agentd's
+   `gateway` provider, and inference-gateway's `anthropic` upstream) and
+   `vault_stoa_openrouter_api_key`. `roles/containerapps` turns them into
+   Podman secrets via `containerapps_podman_secrets` in host_vars before
+   starting any unit; `plays/apps/stoa_secrets.yml` rotates them later.
+3. agentd needs no `LLM_PROVIDER`/`GATEWAY_API_URL`: `config.yaml`'s
+   `llm.default` picks the `gateway` provider, and an unset
+   `GATEWAY_API_URL` falls back to `https://api.anthropic.com`.
 4. After first boot, Garage needs a one-time bucket/key setup matching the
    access/secret key pair from step 1 (upstream's own `garage-init` is
    `profiles: disabled` too, i.e. manual by design) -- run stoa's

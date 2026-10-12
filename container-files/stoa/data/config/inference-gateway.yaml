@@ -1,8 +1,9 @@
 # inference-gateway configuration
 #
-# Upstream API keys are never stored here in plaintext.
-# Each upstream references an environment variable via api_key_env.
-# Set those variables in your .env file (they are already present for agentd).
+# Upstream API keys are never stored here in plaintext. Enabled upstreams
+# read theirs via api_key_file from a Podman secret mounted by
+# stoa-inference-gateway.container (api_key_env also works, but nothing
+# sets those env vars here).
 
 listen: ":8080"
 
@@ -25,7 +26,7 @@ upstreams:
   - name: anthropic
     dialect: anthropic
     api_url: https://api.anthropic.com
-    api_key_env: ANTHROPIC_API_KEY   # reuses the same var as agentd
+    api_key_file: /run/secrets/anthropic_api_key   # agentd's gateway_api_key secret
     default_model: claude-haiku-4-5-20251001
     default_max_tokens: 8096
 
@@ -51,7 +52,7 @@ upstreams:
   - name: openrouter
     dialect: openai
     api_url: https://openrouter.ai/api/v1
-    api_key_env: OPENROUTER_API_KEY
+    api_key_file: /run/secrets/openrouter_api_key
     default_model: openai/gpt-4o
     default_max_tokens: 4096
     static_models_only: true

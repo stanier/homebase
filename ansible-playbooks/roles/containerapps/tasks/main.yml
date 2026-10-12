@@ -322,6 +322,10 @@
         ) | unique
       }}
 
+- name: Create this host's Podman secrets
+  ansible.builtin.include_tasks: podman_secrets.yml
+  when: containerapps_podman_secrets | length > 0
+
 - name: Export XDG_RUNTIME_DIR/DBUS_SESSION_BUS_ADDRESS for interactive containers-user shells
   # `sudo -u containers bash` doesn't go through logind, so without
   # these `systemctl --user` fails with "Failed to connect to bus".

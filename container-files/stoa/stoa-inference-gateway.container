@@ -9,15 +9,14 @@ Image=stoa-inference-gateway.build
 Network=stoa-external.network
 NetworkAlias=inference-gateway
 PublishPort=8080:8080
-# Create these once per host: podman secret create venice_api_key -,
-# podman secret create arcee_api_key -, podman secret create openrouter_api_key -
-# Only needed for the upstreams actually enabled in inference-gateway.yaml.
-Secret=venice_api_key,type=mount,target=/run/secrets/venice_api_key
-Secret=arcee_api_key,type=mount,target=/run/secrets/arcee_api_key
+# One Secret= per upstream enabled in inference-gateway.yaml, mounted where
+# that upstream's api_key_file points. Podman refuses to start the
+# container if any listed secret is missing, so don't list secrets for
+# disabled upstreams. inference-gateway doesn't read *_FILE env vars, only
+# api_key_file. The anthropic upstream reuses agentd's gateway_api_key.
+# The secrets themselves come from containerapps_podman_secrets.
+Secret=gateway_api_key,type=mount,target=/run/secrets/anthropic_api_key
 Secret=openrouter_api_key,type=mount,target=/run/secrets/openrouter_api_key
-Environment=VENICE_API_KEY_FILE=/run/secrets/venice_api_key
-Environment=ARCEE_API_KEY_FILE=/run/secrets/arcee_api_key
-Environment=OPENROUTER_API_KEY_FILE=/run/secrets/openrouter_api_key
 Volume=/srv/containers/container-files/stoa/data/config/inference-gateway.yaml:/etc/inference-gateway/config.yaml:ro,z
 Exec=-config /etc/inference-gateway/config.yaml
 HealthCmd=wget -qO- http://localhost:8080/healthz || exit 1

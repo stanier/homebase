@@ -60,6 +60,15 @@ containerapps_cgroup_manager: systemd
 # unhelpful exit 1. Empty leaves the kernel default.
 containerapps_unprivileged_port_start: ""
 
+# Podman secrets (Secret= in a .container) for the containers user, as
+# [{name, value}], with each value from the vault. Missing ones are
+# created before any unit starts, since Podman won't start a container
+# whose secret doesn't exist. Existing ones are left alone. To rotate,
+# re-run with containerapps_podman_secrets_replace=true and restart the
+# units that mount them (plays/apps/stoa_secrets.yml does this for stoa).
+containerapps_podman_secrets: []
+containerapps_podman_secrets_replace: false
+
 # Directories a service needs beyond what the container-files sync
 # brings, keyed by service name and created only on hosts running that
 # service. Relative paths are under containerapps_dest; absolute paths
