@@ -2,28 +2,13 @@
 - name: Install podman for detected package manager
   ansible.builtin.include_tasks: install_podman.yml
 
-- name: Disable linger for containers user before modifying account
-  ansible.builtin.command: "loginctl disable-linger {{ containers_user }}"
-  register: disable_linger
-  changed_when: disable_linger.rc == 0
-  failed_when: false
-
-- name: Terminate any running sessions/processes for containers user
-  ansible.builtin.command: "loginctl terminate-user {{ containers_user }}"
-  changed_when: false
-  failed_when: false
-
-- name: Wait for containers user's systemd instance to stop
-  ansible.builtin.command: "loginctl show-user {{ containers_user }} -p State --value"
-  register: containers_user_state
-  until: containers_user_state.stdout | trim not in ['active', 'lingering', 'opening']
-  retries: 10
-  delay: 1
-  changed_when: false
-  failed_when: false
-
-- name: Create dedicated user for running rootless podman
-  ansible.builtin.user:
+# usermod (behind ansible.builtin.user) refuses to change an account that
+# has running processes, so the containers user's systemd instance, and with
+# it every rootless container on the host, has to be stopped first. Only do
+# that when the account actually needs changing (or doesn't exist yet), not
+# on every run: check mode reports whether the real task would change it.
+- name: Check whether the containers user's account needs changing
+  ansible.builtin.user: &containers_user_account
     name: "{{ containers_user }}"
     system: false
     create_home: true
@@ -34,6 +19,34 @@
     groups: "{{ containers_user_groups }}"
     append: true
     state: present
+  check_mode: true
+  register: containers_user_account_check
+
+- name: Stop the containers user before modifying their account
+  when: containers_user_account_check.changed
+  block:
+    - name: Disable linger for containers user before modifying account
+      ansible.builtin.command: "loginctl disable-linger {{ containers_user }}"
+      register: disable_linger
+      changed_when: disable_linger.rc == 0
+      failed_when: false
+
+    - name: Terminate any running sessions/processes for containers user
+      ansible.builtin.command: "loginctl terminate-user {{ containers_user }}"
+      changed_when: false
+      failed_when: false
+
+    - name: Wait for containers user's systemd instance to stop
+      ansible.builtin.command: "loginctl show-user {{ containers_user }} -p State --value"
+      register: containers_user_state
+      until: containers_user_state.stdout | trim not in ['active', 'lingering', 'opening']
+      retries: 10
+      delay: 1
+      changed_when: false
+      failed_when: false
+
+- name: Create dedicated user for running rootless podman
+  ansible.builtin.user: *containers_user_account
   register: containers_user_account
 
 - name: Check for existing subuid/subgid range
