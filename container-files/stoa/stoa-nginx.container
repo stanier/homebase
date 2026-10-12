@@ -8,7 +8,10 @@ Requires=stoa-agentd.service
 Image=docker.io/library/nginx:1.30.0-alpine
 Network=stoa-external.network
 PublishPort=8090:8080
-Volume=/srv/containers/container-files/stoa/data/config/nginx.conf:/etc/nginx/conf.d/default.conf:ro,z
+# A template, not conf.d/default.conf directly -- see nginx.conf's header.
+# Has the entrypoint export NGINX_LOCAL_RESOLVERS for that template.
+Environment=NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1
+Volume=/srv/containers/container-files/stoa/data/config/nginx.conf:/etc/nginx/templates/default.conf.template:ro,z
 
 [Service]
 Restart=always
