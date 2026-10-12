@@ -77,19 +77,39 @@ What that wiring does **not** cover -- do these by hand:
    `group_vars/all/vault.yml` via `ansible-vault edit` -- see
    `../ansible-playbooks/docs/VAULT.md`. `group_vars/all/vars.yml` already
    references all of them under their plain `stoa_*` names.
-2. Add `vault_stoa_gateway_api_key` (an Anthropic API key: agentd's
-   `gateway` provider, and inference-gateway's `anthropic` upstream) and
-   `vault_stoa_openrouter_api_key`. `roles/containerapps` turns them into
-   Podman secrets via `containerapps_podman_secrets` in host_vars before
-   starting any unit; `plays/apps/stoa_secrets.yml` rotates them later.
-3. agentd needs no `LLM_PROVIDER`/`GATEWAY_API_URL`: `config.yaml`'s
-   `llm.default` picks the `gateway` provider, and an unset
-   `GATEWAY_API_URL` falls back to `https://api.anthropic.com`.
+2. Add the LLM keys (see "LLM keys" below): `vault_stoa_anthropic_api_key`
+   (the real Anthropic key), `vault_stoa_openrouter_api_key`, and
+   `vault_stoa_gateway_api_key` (issued by apikeyd after first boot).
+   `roles/containerapps` turns them into Podman secrets via
+   `containerapps_podman_secrets` before starting any unit;
+   `plays/apps/stoa_secrets.yml` replaces them later.
+3. agentd's `gateway` provider points at inference-gateway
+   (`GATEWAY_API_URL` in host_vars), not straight at Anthropic.
 4. After first boot, Garage needs a one-time bucket/key setup matching the
    access/secret key pair from step 1 (upstream's own `garage-init` is
    `profiles: disabled` too, i.e. manual by design) -- run stoa's
    `scripts/garage-init.sh` equivalent commands against the running
    `stoa-garage` container.
+
+## LLM keys
+
+agentd never holds a provider key. Its `gateway` provider talks
+Anthropic's API to inference-gateway, which checks the caller's
+`stoa-infgw_*` key against apikeyd and then forwards with the real
+upstream key (`anthropic_api_key`, `openrouter_api_key`). Web sessions
+use the per-user key authd provisions at login; agentd's own
+`gateway_api_key` covers model discovery and sessions with no user.
+Pointing agentd straight at api.anthropic.com breaks web chat with a 401:
+agentd sends the user's `stoa-infgw_*` key there.
+
+`gateway_api_key` can only be issued once apikeyd is running. On the
+stoa host, as the containers user:
+
+    curl -s -X POST -H "Authorization: Bearer $APIKEYD_ADMIN_TOKEN" \
+      http://127.0.0.1:8889/admin/users/agentd/key
+
+Put the returned `key` in `vault_stoa_gateway_api_key`, then run
+`plays/apps/stoa_secrets.yml`.
 
 ## Login (Keycloak)
 

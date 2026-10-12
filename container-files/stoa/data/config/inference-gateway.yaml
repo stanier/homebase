@@ -26,7 +26,7 @@ upstreams:
   - name: anthropic
     dialect: anthropic
     api_url: https://api.anthropic.com
-    api_key_file: /run/secrets/anthropic_api_key   # agentd's gateway_api_key secret
+    api_key_file: /run/secrets/anthropic_api_key   # the real Anthropic key
     default_model: claude-haiku-4-5-20251001
     default_max_tokens: 8096
 

@@ -24,8 +24,10 @@ Environment=GARAGE_S3_REGION=garage
 Environment=AGENTD_SQUID_CONF_PATH=/app/squid/squid.conf
 Environment=MCP_PROXY_ADDRESS=http://stoa-squid:3128
 
-# LLM provider API key -- create once per host:
-#   podman secret create gateway_api_key -
+# agentd's own stoa-infgw_* key for inference-gateway (GATEWAY_API_URL),
+# issued by apikeyd, not an upstream provider key. It's used for model
+# discovery and sessions without a user; web sessions send the per-user
+# key authd provisions at login instead. See README "LLM keys".
 Secret=gateway_api_key,type=mount,target=/run/secrets/gateway_api_key
 Environment=GATEWAY_API_KEY_FILE=/run/secrets/gateway_api_key
 

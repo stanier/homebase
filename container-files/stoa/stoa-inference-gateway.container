@@ -13,9 +13,9 @@ PublishPort=8080:8080
 # that upstream's api_key_file points. Podman refuses to start the
 # container if any listed secret is missing, so don't list secrets for
 # disabled upstreams. inference-gateway doesn't read *_FILE env vars, only
-# api_key_file. The anthropic upstream reuses agentd's gateway_api_key.
+# api_key_file.
 # The secrets themselves come from containerapps_podman_secrets.
-Secret=gateway_api_key,type=mount,target=/run/secrets/anthropic_api_key
+Secret=anthropic_api_key,type=mount,target=/run/secrets/anthropic_api_key
 Secret=openrouter_api_key,type=mount,target=/run/secrets/openrouter_api_key
 Volume=/srv/containers/container-files/stoa/data/config/inference-gateway.yaml:/etc/inference-gateway/config.yaml:ro,z
 Exec=-config /etc/inference-gateway/config.yaml
