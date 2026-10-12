@@ -32,6 +32,14 @@
       # provider checks. The groups mapper puts the user's FreeIPA groups
       # (plain names, from the federation's groups mapper) in a "groups"
       # claim; the UI lets fleet-admins change settings.
+      # stoa's authd (container-files/stoa), which brokers logins for
+      # webd and apikeyd. It uses PKCE and reads sub/email/name/
+      # preferred_username from userinfo; nothing reads groups yet.
+      - client_id: stoa
+        name: Stoa
+        secret_var: keycloak_stoa_client_secret
+        redirect_uri: "https://stoa-authd.{{ base_domain }}/oauth/callback"
+        origin: "https://stoa.{{ base_domain }}"
       - client_id: meshcore-webui
         name: MeshCore traffic
         secret_var: keycloak_meshcore_webui_client_secret

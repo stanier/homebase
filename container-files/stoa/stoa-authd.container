@@ -21,7 +21,12 @@ Environment=AUTHD_APIKEYD_URL=http://apikeyd:8889
 # AUTHD_OAUTH_LOCAL_CLIENT_SECRET, AUTHD_ALLOWED_REDIRECT_ORIGINS,
 # AUTHD_APIKEYD_ADMIN_TOKEN come from .env.
 EnvironmentFile=/srv/containers/container-files/stoa/.env
-Volume=/srv/containers/container-files/stoa/data/config/authd.yaml:/etc/authd/config.yaml:ro,z
+# Templated per environment from host_vars/stoa.yml (needs base_domain).
+Volume=/srv/containers/container-files/stoa/authd.yaml:/etc/authd/config.yaml:ro,z
+# Keycloak sits behind Caddy's internal CA. Go reads every cert in
+# SSL_CERT_DIR on top of the image's default bundle file.
+Volume=/srv/containers/container-files/stoa/root-ca.crt:/etc/stoa-ca/root-ca.crt:ro,z
+Environment=SSL_CERT_DIR=/etc/ssl/certs:/etc/stoa-ca
 HealthCmd=wget -qO- http://localhost:8888/healthz || exit 1
 HealthInterval=10s
 HealthTimeout=5s

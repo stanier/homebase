@@ -15,3 +15,5 @@ matrix/data/
 matrix/root-ca.crt
 meshcore/data/
 meshcore/root-ca.crt
+stoa/authd.yaml
+stoa/root-ca.crt

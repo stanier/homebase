@@ -91,6 +91,20 @@ What that wiring does **not** cover -- do these by hand:
    `scripts/garage-init.sh` equivalent commands against the running
    `stoa-garage` container.
 
+## Login (Keycloak)
+
+authd brokers every login. Its config isn't in `data/config/`: it's
+templated per environment as `stoa/authd.yaml` by `host_vars/stoa.yml`'s
+`containerapps_secret_files`, because the issuer URL needs `base_domain`.
+It has a single provider, `keycloak` (`https://keycloak.<base_domain>/realms/master`),
+so FreeIPA users log in through Keycloak's LDAP federation. The `stoa`
+client itself comes from `plays/apps/keycloak.yml`, and its secret is
+`vault_keycloak_stoa_client_secret`, used by both sides.
+
+Keep it at one provider: the web UI doesn't pass `?provider=`, and authd
+only falls back to a default when exactly one is configured.
+`local-idp` (and its Postgres) still runs but is no longer used for login.
+
 ## The Podman socket
 
 `stoa-agentd.container` bind-mounts the host's rootless Podman socket
